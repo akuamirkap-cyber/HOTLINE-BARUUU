@@ -1,0 +1,6 @@
+{
+  "name": "HOT//LINE — Top-Down Superhot Hotline",
+  "description": "Top-Down Retro Action Game inspired by Hotline Miami and Superhot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
