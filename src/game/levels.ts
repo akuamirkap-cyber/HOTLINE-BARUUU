@@ -2,7 +2,7 @@
 // # wall   . floor   G glass (bullets pass, breakable)   T furniture (blocks walking, not bullets)
 // D door (auto orientation)   E exit   P player start
 // Enemies: m=bat  k=knife  p=pistol  s=shotgun  u=uzi  r=rifle  f=unarmed  B=BIG BOSS
-// Pickups: b=bat  n=knife  K=katana  i=pipe  1=pistol  2=shotgun  3=uzi  4=rifle  Z=sniper
+// Pickups: b=bat  n=knife  K=katana  N=nunchaku  i=pipe  1=pistol  2=shotgun  3=uzi  4=rifle  Z=sniper
 
 export interface LevelDef {
   name: string;
@@ -57,7 +57,7 @@ export const LEVELS: LevelDef[] = [
     sub: 'FLOOR 23 — 03:12 AM',
     map: [
       '##########################################',
-      '#......#.........G.......#...............#',
+      '#..N...#.........G.......#...............#',
       '#..P...#..TT..TT.G..TT...#..TT....TT.....#',
       '#......D.........G.......D...............#',
       '#......#..TT..TT.G..TT...#..TT..p.TT.....#',
@@ -107,7 +107,7 @@ export const LEVELS: LevelDef[] = [
     map: [
       '############################################',
       '#P...#.............................#.......#',
-      '#....#..TT....TT....TT....TT.......#...s...#',
+      '#..N.#..TT....TT....TT....TT.......#...s...#',
       '#....D.............................D.......#',
       '#....#..TT....TT....TT....TT...m...#.......#',
       '#.i..#.............................#...p...#',

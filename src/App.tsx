@@ -4,6 +4,7 @@ import type { GameSnapshot } from './game/engine';
 import { LEVELS } from './game/levels';
 import { initAudio } from './game/audio';
 import { enterMobileLandscape, isPortrait, isTouchDevice, releaseMobileLandscape } from './game/mobile';
+import { type SkinId, getStoredSkin } from './game/skins';
 import { Menu } from './components/Menu';
 import { ControlsDialog } from './components/ControlsDialog';
 import { GameControls } from './components/GameControls';
@@ -37,13 +38,15 @@ interface GameViewProps {
   level: number;
   mobileControls: boolean;
   touchDevice: boolean;
+  currentSkin: SkinId;
+  onSelectSkin: (skin: SkinId) => void;
   onToggleControls: () => void;
   onLandscape: () => void;
   onExit: () => void;
   onDone: (level: number, score: number) => void;
 }
 
-function GameView({ level, mobileControls, touchDevice, onToggleControls, onLandscape, onExit, onDone }: GameViewProps) {
+function GameView({ level, mobileControls, touchDevice, currentSkin, onSelectSkin, onToggleControls, onLandscape, onExit, onDone }: GameViewProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const callbacks = useRef({ onExit, onDone });
   callbacks.current = { onExit, onDone };
@@ -58,9 +61,14 @@ function GameView({ level, mobileControls, touchDevice, onToggleControls, onLand
       onLevelComplete: (l, s) => callbacks.current.onDone(l, s),
       onUIChange: setSnapshot,
     });
+    if (currentSkin) instance.setSkin(currentSkin);
     setGame(instance);
     return () => instance.destroy();
   }, [level]);
+
+  useEffect(() => {
+    if (game && currentSkin) game.setSkin(currentSkin);
+  }, [game, currentSkin]);
 
   useEffect(() => {
     const onResize = () => setPortrait(isPortrait());
@@ -74,7 +82,16 @@ function GameView({ level, mobileControls, touchDevice, onToggleControls, onLand
   return (
     <>
       <canvas ref={canvas} className="fixed inset-0 block" style={{ cursor: mobileControls ? 'default' : 'none', touchAction: 'none' }} aria-label="Game HOT//LINE" />
-      <GameControls game={game} snapshot={snapshot} enabled={mobileControls} rotateRequired={rotateRequired} onToggle={onToggleControls} onLandscape={onLandscape} />
+      <GameControls
+        game={game}
+        snapshot={snapshot}
+        enabled={mobileControls}
+        rotateRequired={rotateRequired}
+        currentSkin={currentSkin}
+        onSelectSkin={onSelectSkin}
+        onToggle={onToggleControls}
+        onLandscape={onLandscape}
+      />
     </>
   );
 }
@@ -83,6 +100,7 @@ export default function App() {
   const [save, setSave] = useState<Save>(loadSave);
   const [playing, setPlaying] = useState<number | null>(null);
   const [selected, setSelected] = useState(0);
+  const [skin, setSkin] = useState<SkinId>(getStoredSkin);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [touchDevice] = useState(isTouchDevice);
   const [mobileControls, setMobileControls] = useState(touchDevice);
@@ -142,7 +160,19 @@ export default function App() {
   }, [playing, controlsOpen, selected, save.unlocked, touchDevice, mobileControls]);
 
   if (playing !== null) {
-    return <GameView level={playing} mobileControls={mobileControls} touchDevice={touchDevice} onToggleControls={() => setMobileControls((enabled) => !enabled)} onLandscape={requestLandscape} onExit={onExit} onDone={onDone} />;
+    return (
+      <GameView
+        level={playing}
+        mobileControls={mobileControls}
+        touchDevice={touchDevice}
+        currentSkin={skin}
+        onSelectSkin={setSkin}
+        onToggleControls={() => setMobileControls((enabled) => !enabled)}
+        onLandscape={requestLandscape}
+        onExit={onExit}
+        onDone={onDone}
+      />
+    );
   }
 
   return (
@@ -151,6 +181,8 @@ export default function App() {
         unlocked={save.unlocked}
         best={save.best}
         selected={selected}
+        currentSkin={skin}
+        onSelectSkin={setSkin}
         mobileControls={mobileControls}
         touchDevice={touchDevice}
         onToggleControls={() => setMobileControls((enabled) => !enabled)}

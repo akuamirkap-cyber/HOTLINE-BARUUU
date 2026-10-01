@@ -103,6 +103,28 @@ export const sfx = {
     noise(heavy ? 0.25 : 0.12, heavy ? 900 : 1400, 2, heavy ? 0.5 : 0.3, 'bandpass');
     if (heavy) tone(220, 0.2, 0.1, 'sine', 90);
   },
+  nunchakuSpin(heavy = false) {
+    // Aerodynamic whirlwind whistle + chain links
+    noise(heavy ? 0.24 : 0.14, heavy ? 1600 : 2200, 3, heavy ? 0.55 : 0.35, 'bandpass');
+    tone(heavy ? 380 : 490, heavy ? 0.22 : 0.12, 0.18, 'sine', heavy ? 140 : 210);
+    // Chain rattle clink
+    noise(0.04, 5500, 1.2, 0.2, 'highpass', 0.03);
+    tone(2800, 0.04, 0.08, 'triangle', undefined, 0.04);
+  },
+  nunchakuHit() {
+    // Sharp hardwood strike + resonant body + chain slap
+    tone(220, 0.15, 0.95, 'triangle', 45);
+    tone(95, 0.25, 0.8, 'sine', 35);
+    noise(0.08, 2200, 1.4, 0.85);
+    noise(0.03, 6500, 0.8, 0.5, 'highpass', 0.02);
+  },
+  nunchakuDeflect() {
+    // High-speed metallic bullet deflection ping + sparks
+    tone(3200, 0.28, 0.45, 'sine', 2200);
+    tone(4800, 0.18, 0.3, 'triangle', 3600, 0.01);
+    tone(180, 0.12, 0.4, 'sine', 80);
+    noise(0.06, 7500, 0.6, 0.4, 'highpass');
+  },
   headshot() {
     tone(2400, 0.25, 0.25, 'square', 1800);
     tone(3600, 0.18, 0.12, 'sine', 3000, 0.03);

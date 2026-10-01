@@ -1,11 +1,12 @@
 import { LEVELS } from './levels';
 import { sfx, setMusicDuck, initAudio, startMusic, toggleMusic } from './audio';
+import { type SkinId, getStoredSkin, setStoredSkin } from './skins';
 
 export const T = 32;
 const S = 2; // prerender scale
 const EXTR = 10; // wall extrusion
 
-export type WType = 'bat' | 'pipe' | 'knife' | 'katana' | 'pistol' | 'shotgun' | 'uzi' | 'rifle' | 'sniper';
+export type WType = 'bat' | 'pipe' | 'knife' | 'katana' | 'nunchaku' | 'pistol' | 'shotgun' | 'uzi' | 'rifle' | 'sniper';
 
 interface WDef {
   name: string;
@@ -26,6 +27,7 @@ export const WEAPONS: Record<WType, WDef> = {
   pipe: { name: 'LEAD PIPE', melee: true, cooldown: 0.45, range: 42, arc: 1.9 },
   knife: { name: 'KNIFE', melee: true, cooldown: 0.24, range: 36, arc: 1.5, blade: true },
   katana: { name: 'KATANA', melee: true, cooldown: 0.3, range: 54, arc: 2.3, blade: true },
+  nunchaku: { name: 'NUNCHAKU', melee: true, cooldown: 0.14, range: 50, arc: 2.8 },
   pistol: { name: '9MM', melee: false, cooldown: 0.18, ammo: 12, pellets: 1, spread: 0.03, auto: false, noise: 650 },
   shotgun: { name: 'SHOTGUN', melee: false, cooldown: 0.55, ammo: 6, pellets: 8, spread: 0.34, auto: false, noise: 850 },
   uzi: { name: 'UZI', melee: false, cooldown: 0.065, ammo: 30, pellets: 1, spread: 0.14, auto: true, noise: 650 },
@@ -42,8 +44,8 @@ interface Pickup {
   thrown: boolean; hit: Set<number>;
 }
 interface Bullet { x: number; y: number; vx: number; vy: number; sx: number; sy: number; owner: number; life: number; pierce?: boolean; hitIds?: Set<number>; dodged?: boolean; dmg?: number; head?: number; weapon?: WType; }
-interface Swing { from: number; to: number; t: number; dur: number; kind: 'blade' | 'blunt'; spin: boolean; }
-const WLEN: Partial<Record<WType, number>> = { bat: 28, pipe: 26, knife: 16, katana: 37 };
+export interface Swing { from: number; to: number; t: number; dur: number; kind: 'blade' | 'blunt'; spin: boolean; }
+const WLEN: Partial<Record<WType, number>> = { bat: 28, pipe: 26, knife: 16, katana: 37, nunchaku: 32 };
 interface Half { x: number; y: number; vx: number; vy: number; cut: number; body: number; side: number; rot: number; vr: number; facets: number[]; t: number; }
 interface Enemy {
   id: number; x: number; y: number; angle: number; r: number;
@@ -59,6 +61,7 @@ interface Enemy {
   batHits: number; launchDistance: number; launchHits: Set<number>;
   boss: boolean; homeX: number; homeY: number; burstShots: number;
   moveVx: number; moveVy: number; moveSpeed: number; strafeDir: number; strafeT: number; dodgeCd: number; dodgeT: number;
+  doorPause?: number; doorBreached?: boolean;
 }
 interface Trail { x1: number; y1: number; x2: number; y2: number; life: number; max: number; enemy: boolean; w: number; }
 interface Ghost { x: number; y: number; angle: number; life: number; }
@@ -87,6 +90,7 @@ export interface GameSnapshot {
   totalEnemies: number;
   timeSeconds: number;
   maxCombo: number;
+  skin: SkinId;
 }
 
 function mulberry(seed: number) {
@@ -149,6 +153,7 @@ export class Game {
   ctx: CanvasRenderingContext2D;
   cb: GameCallbacks;
   levelIndex = 0;
+  skin: SkinId = getStoredSkin();
   tiles: string[][] = [];
   w = 0; h = 0;
   player = {
@@ -384,6 +389,12 @@ export class Game {
     this.cb.onQuit();
   }
 
+  setSkin(skin: SkinId) {
+    this.skin = skin;
+    setStoredSkin(skin);
+    this.emitUI(true);
+  }
+
   private reportCompletion() {
     if (this.state !== 'complete' || this.levelReported) return;
     this.levelReported = true;
@@ -414,6 +425,7 @@ export class Game {
       totalEnemies: this.totalEnemies,
       timeSeconds: Math.floor(this.levelTime),
       maxCombo: this.maxCombo,
+      skin: this.skin || 'superhot',
     };
   }
 
@@ -464,7 +476,7 @@ export class Game {
     p.vx = 0; p.vy = 0; p.moveSpeed = 0;
     this.slowmo = 0; this.whiteFlash = 0; this.worldScale = 1;
     const enemyMap: Record<string, WType | null> = { m: 'bat', k: 'knife', p: 'pistol', s: 'shotgun', u: 'uzi', r: 'rifle', f: null };
-    const pickMap: Record<string, WType> = { b: 'bat', n: 'knife', K: 'katana', i: 'pipe', '1': 'pistol', '2': 'shotgun', '3': 'uzi', '4': 'rifle', Z: 'sniper' };
+    const pickMap: Record<string, WType> = { b: 'bat', n: 'knife', K: 'katana', N: 'nunchaku', i: 'pipe', '1': 'pistol', '2': 'shotgun', '3': 'uzi', '4': 'rifle', Z: 'sniper' };
     const solidCh = (x: number, y: number) => { const c = this.tiles[y]?.[x]; return c === '#' || c === 'G' || c === undefined; };
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
@@ -496,16 +508,16 @@ export class Game {
     if (def.starterLoadout !== false) {
       const ptx = Math.floor(p.x / T), pty = Math.floor(p.y / T);
       const spots: [number, number][] = [];
-      for (let r = 1; r <= 3 && spots.length < 5; r++)
+      for (let r = 1; r <= 3 && spots.length < 6; r++)
         for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || spots.length >= 5) continue;
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || spots.length >= 6) continue;
           const tx = ptx + dx, ty = pty + dy;
           if (this.tile(tx, ty) !== '.' || this.solidMove(tx, ty)) continue;
           if (!this.los(p.x, p.y, tx * T + T / 2, ty * T + T / 2)) continue;
           if (this.pickups.some((q) => Math.floor(q.x / T) === tx && Math.floor(q.y / T) === ty)) continue;
           spots.push([tx, ty]);
         }
-      const starter: WType[] = ['sniper', 'rifle', 'katana', 'pistol', 'bat'];
+      const starter: WType[] = ['nunchaku', 'katana', 'sniper', 'rifle', 'pistol', 'bat'];
       spots.forEach(([tx, ty], i) => {
         const t = starter[i];
         this.pickups.push({ x: tx * T + T / 2, y: ty * T + T / 2, vx: 0, vy: 0, angle: -0.4 + i * 0.5, spin: 0, type: t, ammo: WEAPONS[t].ammo || 0, thrown: false, hit: new Set() });
@@ -780,8 +792,22 @@ export class Game {
       if (e === this.hostage || e.state === 'hostage' || e.state === 'down' || e.state === 'alert') continue;
       if (Math.hypot(e.x - x, e.y - y) < radius) {
         e.state = 'search';
-        e.lastX = x; e.lastY = y;
-        e.path = this.findPath(e.x, e.y, x, y) || [];
+        // Enemies without direct line-of-sight investigate the doorway / origin of sound
+        let tx = x, ty = y;
+        if (!this.los(e.x, e.y, x, y)) {
+          // Check if separated by closed doors
+          for (const dr of this.doors) {
+            if (Math.abs(angDiff(dr.closed, dr.angle)) < 0.4) {
+              const dToDoor = Math.hypot(dr.hx - e.x, dr.hy - e.y);
+              if (dToDoor < Math.hypot(x - e.x, y - e.y)) {
+                tx = dr.hx; ty = dr.hy;
+                break;
+              }
+            }
+          }
+        }
+        e.lastX = tx; e.lastY = ty;
+        e.path = this.findPath(e.x, e.y, tx, ty) || [];
         e.pathT = 0.6;
         e.turnT = 0;
         e.alertFlash = 0.6;
@@ -795,9 +821,14 @@ export class Game {
       if (ally === source || ally.state === 'down' || ally.state === 'hostage' || ally.state === 'alert') continue;
       if (Math.hypot(ally.x - source.x, ally.y - source.y) > 420) continue;
       ally.state = 'search';
-      ally.lastX = p.x;
-      ally.lastY = p.y;
-      ally.path = this.findPath(ally.x, ally.y, p.x, p.y) || [];
+      // If ally does NOT have direct LOS to player (e.g. player behind closed door),
+      // ally investigates the shout origin (source.x, source.y) or doorway, not x-ray wallhacks
+      const hasLos = this.los(ally.x, ally.y, p.x, p.y);
+      const targetX = hasLos ? p.x : source.x;
+      const targetY = hasLos ? p.y : source.y;
+      ally.lastX = targetX;
+      ally.lastY = targetY;
+      ally.path = this.findPath(ally.x, ally.y, targetX, targetY) || [];
       ally.pathT = 0.5;
       ally.turnT = 0;
       ally.alertFlash = 0.7;
@@ -1468,9 +1499,11 @@ export class Game {
         this.weaponBuffer = 0;
         this.mouse.right = false;
         const c = Math.cos(p.angle), s = Math.sin(p.angle);
-        this.pickups.push({ x: p.x + c * 12, y: p.y + s * 12, vx: c * 920, vy: s * 920, angle: p.angle, spin: 28, type: p.weapon, ammo: p.ammo, thrown: true, hit: new Set() });
+        const isNunchaku = p.weapon === 'nunchaku';
+        this.pickups.push({ x: p.x + c * 12, y: p.y + s * 12, vx: c * 920, vy: s * 920, angle: p.angle, spin: isNunchaku ? 45 : 28, type: p.weapon, ammo: p.ammo, thrown: true, hit: new Set() });
         p.weapon = null; p.ammo = 0;
-        sfx.throwW();
+        if (isNunchaku) sfx.nunchakuSpin(true);
+        else sfx.throwW();
         this.shake = Math.max(this.shake, 4);
       } else if (near) {
         this.weaponBuffer = 0;
@@ -1718,32 +1751,37 @@ export class Game {
     const w = p.weapon!;
     const d = WEAPONS[w];
     const blade = !!d.blade;
+    const isNunchaku = w === 'nunchaku';
     const step = p.meleeWin > 0 ? p.meleeStep : 0;
-    const fin = step === 2;
+    const maxSteps = isNunchaku ? 3 : 2;
+    const fin = step === maxSteps;
     p.meleeStep = fin ? 0 : step + 1;
-    p.meleeWin = 0.6;
-    const spin = fin && w === 'katana';
-    const heavy = w === 'bat' || w === 'pipe';
+    p.meleeWin = isNunchaku ? 0.75 : 0.6;
+    const spin = fin && (w === 'katana' || isNunchaku);
+    const heavy = w === 'bat' || w === 'pipe' || (isNunchaku && fin);
     let range = d.range!, arc = d.arc!;
-    if (fin) { range += 12; arc = spin ? Math.PI * 2 : arc + 0.7; }
-    const dur = w === 'knife' ? 0.11 : fin ? (spin ? 0.34 : 0.28) : heavy ? 0.19 : 0.15;
-    p.cd = fin ? d.cooldown * 1.3 : d.cooldown * 0.72;
+    if (fin) { range += isNunchaku ? 16 : 12; arc = spin ? Math.PI * 2 : arc + 0.7; }
+    const dur = w === 'knife' ? 0.11 : isNunchaku ? (fin ? 0.28 : 0.12) : fin ? (spin ? 0.34 : 0.28) : heavy ? 0.19 : 0.15;
+    p.cd = isNunchaku ? (fin ? d.cooldown * 1.1 : d.cooldown * 0.65) : fin ? d.cooldown * 1.3 : d.cooldown * 0.72;
     let from: number, to: number;
     if (spin) { from = 1.6; to = 1.6 - Math.PI * 2.25; }
     else if (fin) { from = -2.5; to = 2.1; }
-    else if (step === 0) { from = -1.8; to = 1.5; }
-    else { from = 1.8; to = -1.5; }
+    else if (step === 0) { from = -1.9; to = 1.6; }
+    else if (step === 1) { from = 1.9; to = -1.6; }
+    else { from = -2.2; to = 1.8; }
     const dir = Math.sign(to - from);
-    p.swing = { from, to, t: 0, dur, kind: blade ? 'blade' : 'blunt', spin };
+    p.swing = { from, to, t: 0, dur, kind: isNunchaku ? 'blunt' : (blade ? 'blade' : 'blunt'), spin };
     p.attackAnim = dur;
-    sfx.swing(fin);
+    if (isNunchaku) sfx.nunchakuSpin(fin);
+    else sfx.swing(fin);
     const target = this.meleeTarget(range + 22, Math.min(arc, 2.8), w === 'bat');
     if (target) this.lungeTo(target, 24);
     const gx = p.x + Math.cos(p.angle) * 26, gy = p.y + Math.sin(p.angle) * 26;
     if (this.tile(Math.floor(gx / T), Math.floor(gy / T)) === 'G') this.breakGlass(Math.floor(gx / T), Math.floor(gy / T), Math.cos(p.angle), Math.sin(p.angle));
     if (spin) {
-      this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.35, max: 0.35, color: 'rgba(198,83,91,0.38)', size: range + 20, kind: 'ring' });
-      this.shake = Math.max(this.shake, 6);
+      const ringCol = isNunchaku ? 'rgba(245,185,50,0.5)' : 'rgba(198,83,91,0.38)';
+      this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.35, max: 0.35, color: ringCol, size: range + 22, kind: 'ring' });
+      this.shake = Math.max(this.shake, isNunchaku ? 8 : 6);
     }
     // gather victims
     const victims: Enemy[] = [];
@@ -1765,13 +1803,15 @@ export class Game {
       const toE = Math.atan2(e.y - p.y, e.x - p.x);
       this.impact(e.x, e.y, toE, fin ? 1.3 : 0.9);
       if (e.boss) {
-        const dmg = w === 'katana' ? (fin ? 3.0 : 2.0) : w === 'bat' ? (fin ? 2.5 : 1.8) : 1.5;
+        const dmg = w === 'katana' ? (fin ? 3.0 : 2.0) : isNunchaku ? (fin ? 3.0 : 1.7) : w === 'bat' ? (fin ? 2.5 : 1.8) : 1.5;
         e.hp -= dmg;
-        sfx.hit();
+        if (isNunchaku) sfx.nunchakuHit();
+        else sfx.hit();
         this.shake = Math.max(this.shake, 14);
         this.hitstop = 0.08;
         if (e.hp <= 0.01) {
           if (w === 'katana') this.sliceEnemy(e, toE + (Math.PI / 2) * dir, 2500, 'BOSS SLICED');
+          else if (isNunchaku) this.killEnemy(e, Math.cos(toE), Math.sin(toE), 2500, 'NUNCHAKU FINISH');
           else this.killEnemy(e, Math.cos(toE), Math.sin(toE), 2500, 'BOSS BATTERED');
         } else {
           this.woundEnemy(e, Math.cos(toE), Math.sin(toE), true);
@@ -1779,7 +1819,21 @@ export class Game {
         }
         return;
       }
-      if (w === 'katana') {
+      if (isNunchaku) {
+        sfx.nunchakuHit();
+        if (fin) {
+          this.knockdown(e, Math.cos(toE), Math.sin(toE), 260, 950, 'NUNCHAKU CYCLONE!');
+          e.doomed = true;
+          this.hitstop = 0.1;
+          this.slowmo = Math.max(this.slowmo, 0.32);
+          this.shake = Math.max(this.shake, 13);
+        } else {
+          const label = ['NUNCHAKU SNAP', 'REVERSE WHIP', 'DRAGON STRIKE'][step] || 'NUNCHAKU';
+          this.killEnemy(e, dx, dy, 600 + step * 120, label);
+          this.shake = Math.max(this.shake, 6);
+          this.hitstop = 0.04;
+        }
+      } else if (w === 'katana') {
         const label = spin ? (victims.length > 1 ? `SPIN SLICE x${victims.length}` : 'SPIN SLICE') : i > 0 ? 'DOUBLE SLICE' : ['SLICED', 'CROSS CUT'][step] || 'SLICED';
         this.sliceEnemy(e, toE + (Math.PI / 2) * dir, 700 + step * 150, label);
       } else if (w === 'bat') {
@@ -2020,6 +2074,23 @@ export class Game {
             e.lostT += dt;
             if (e.lostT > 0.35) { e.turnT = 0; e.state = 'search'; e.path = this.findPath(e.x, e.y, e.lastX, e.lastY) || []; e.pathT = 0.5; }
           }
+          // Dynamic door breach when in alert ("NEKAT")
+          for (const dr of this.doors) {
+            if (Math.abs(angDiff(dr.closed, dr.angle)) < 0.4) {
+              const dx2 = dr.hx + Math.cos(dr.angle) * T, dy2 = dr.hy + Math.sin(dr.angle) * T;
+              const sd = segDist(e.x, e.y, dr.hx, dr.hy, dx2, dy2);
+              if (sd.d < 36 && sd.t >= -0.1 && sd.t <= 1.1) {
+                const perpX = -Math.sin(dr.angle), perpY = Math.cos(dr.angle);
+                const sign = Math.sign(Math.cos(e.angle) * perpX + Math.sin(e.angle) * perpY) || 1;
+                if (Math.abs(dr.av) < 10) {
+                  dr.av = sign * 13;
+                  dr.pushT = 0;
+                  dr.pusher = 'enemy';
+                  sfx.door();
+                }
+              }
+            }
+          }
           const dx = p.x - e.x, dy = p.y - e.y, dist = Math.hypot(dx, dy);
           const toP = Math.atan2(dy, dx);
           const gun = e.weapon && !WEAPONS[e.weapon].melee;
@@ -2033,9 +2104,14 @@ export class Game {
             if (e.strafeT <= 0) { e.strafeDir *= -1; e.strafeT = rand(1.1, 2.4); }
             const px = -Math.sin(toP), py = Math.cos(toP);
             let tx: number, ty: number;
+            const pHasMelee = p.weapon && WEAPONS[p.weapon].melee;
             if (e.dodgeT > 0) {
               tx = e.x + px * e.strafeDir * 110;
               ty = e.y + py * e.strafeDir * 110;
+            } else if (pHasMelee && dist < 130) {
+              // Cautious backpedal against incoming melee rushers
+              tx = e.x - Math.cos(toP) * 110 + px * e.strafeDir * 65;
+              ty = e.y - Math.sin(toP) * 110 + py * e.strafeDir * 65;
             } else if (dist > 320) {
               // close distance without walking in a straight firing lane
               tx = p.x - Math.cos(toP) * 230 + px * e.strafeDir * (e.id % 3 === 0 ? 120 : 42);
@@ -2069,6 +2145,8 @@ export class Game {
             if (e.windup > 0) {
               e.windup -= dt;
               e.angle = rotTo(e.angle, toP, 5 * dt);
+              // Aggressive lunge commitment during strike windup ("NEKAT")
+              this.moveEnemy(e, p.x, p.y, 185, dt, false);
               if (e.windup <= 0) {
                 e.attackAnim = 0.2;
                 e.cd = 0.7;
@@ -2079,19 +2157,56 @@ export class Game {
                 }
               }
             } else {
-              if (sees && dist < 90) this.moveEnemy(e, p.x, p.y, 165, dt);
+              if (sees && dist < 90) this.moveEnemy(e, p.x, p.y, 175, dt);
               else {
                 e.pathT -= dt;
                 if (e.pathT <= 0 || !e.path.length) { e.path = this.findPath(e.x, e.y, p.x, p.y) || []; e.pathT = 0.3; }
-                if (sees && this.clearPath(e.x, e.y, p.x, p.y)) this.moveEnemy(e, p.x, p.y, 165, dt);
-                else this.followPath(e, 165, dt);
+                if (sees && this.clearPath(e.x, e.y, p.x, p.y)) this.moveEnemy(e, p.x, p.y, 175, dt);
+                else this.followPath(e, 175, dt);
               }
-              if (dist < range + p.r - 4 && e.cd <= 0 && p.alive) e.windup = w === 'knife' ? 0.14 : 0.2;
+              if (dist < range + p.r + 10 && e.cd <= 0 && p.alive) e.windup = w === 'knife' ? 0.12 : w === 'nunchaku' ? 0.14 : 0.18;
             }
           }
           break;
         }
         case 'search': {
+          // Check for closed doors along search path ("HATI HATI TAPI NEKAT")
+          let doorNearby: typeof this.doors[0] | null = null;
+          for (const dr of this.doors) {
+            if (Math.abs(angDiff(dr.closed, dr.angle)) < 0.4) {
+              const dx2 = dr.hx + Math.cos(dr.angle) * T, dy2 = dr.hy + Math.sin(dr.angle) * T;
+              const sd = segDist(e.x, e.y, dr.hx, dr.hy, dx2, dy2);
+              if (sd.d < 34 && sd.t >= -0.1 && sd.t <= 1.1) {
+                doorNearby = dr;
+                break;
+              }
+            }
+          }
+          if (doorNearby) {
+            if (e.doorPause === undefined) e.doorPause = 0.18;
+            if (e.doorPause > 0) {
+              e.doorPause -= dt;
+              e.angle = rotTo(e.angle, Math.atan2(doorNearby.hy - e.y, doorNearby.hx - e.x), 8 * dt);
+            } else if (!e.doorBreached) {
+              e.doorBreached = true;
+              const perpX = -Math.sin(doorNearby.angle), perpY = Math.cos(doorNearby.angle);
+              const sign = Math.sign(Math.cos(e.angle) * perpX + Math.sin(e.angle) * perpY) || 1;
+              doorNearby.av = sign * 14;
+              doorNearby.pushT = 0;
+              doorNearby.pusher = 'enemy';
+              sfx.kick();
+              sfx.door();
+              if (Math.hypot(p.x - doorNearby.hx, p.y - doorNearby.hy) < 32) {
+                p.x += Math.cos(e.angle) * 14; p.y += Math.sin(e.angle) * 14;
+                this.collide(p, p.r);
+                this.shake = Math.max(this.shake, 6);
+              }
+            }
+          } else {
+            e.doorPause = undefined;
+            e.doorBreached = false;
+          }
+
           e.pathT -= dt;
           if (e.path.length) {
             this.followPath(e, 130, dt);
@@ -2101,10 +2216,10 @@ export class Game {
             e.pathT = 0.8;
             if (!e.path.length) e.turnT = -0.1;
           } else {
-            // look around then give up
+            // Tactical corner slicing sweep rather than spinning blindly
             e.turnT -= dt;
-            e.angle += dt * 2.2;
-            if (e.turnT < -2.8) { e.state = e.base; e.turnT = rand(2, 5); e.lookT = 0; }
+            e.angle += Math.sin(e.turnT * 3.5) * dt * 2.8;
+            if (e.turnT < -2.6) { e.state = e.base; e.turnT = rand(2, 5); e.lookT = 0; }
           }
           break;
         }
@@ -2391,6 +2506,44 @@ export class Game {
             continue outer;
           }
         }
+        // Nunchaku bullet deflection!
+        if (b.owner !== 0 && p.alive && p.weapon === 'nunchaku' && (p.attackAnim > 0 || (p.swing && p.swing.t < p.swing.dur))) {
+          const dToP = Math.hypot(p.x - b.x, p.y - b.y);
+          if (dToP < 56) {
+            const toB = Math.atan2(b.y - p.y, b.x - p.x);
+            const inArc = p.swing?.spin || Math.abs(angDiff(p.angle, toB)) < 1.75;
+            if (inArc) {
+              b.owner = 0; // deflected: now player's bullet!
+              const aim = p.angle;
+              const sp = Math.max(700, Math.hypot(b.vx, b.vy)) * 1.25;
+              b.vx = Math.cos(aim) * sp;
+              b.vy = Math.sin(aim) * sp;
+              b.sx = p.x;
+              b.sy = p.y;
+              b.life = 1.0;
+              b.dmg = 2.5;
+              b.dodged = true;
+              sfx.nunchakuDeflect();
+              this.shake = Math.max(this.shake, 7);
+              this.hitstop = 0.05;
+              this.slowmo = Math.max(this.slowmo, 0.25);
+              this.texts.push({ x: b.x, y: b.y - 18, text: '★ DEFLECT! ★', life: 0.85, color: '#d4af37', size: 12 });
+              this.score += 250;
+              for (let k = 0; k < 7; k++) {
+                const a = aim + rand(-1.2, 1.2);
+                this.particles.push({
+                  x: b.x, y: b.y,
+                  vx: Math.cos(a) * rand(120, 360),
+                  vy: Math.sin(a) * rand(120, 360),
+                  life: 0.22, max: 0.22,
+                  color: k % 2 === 0 ? '#ffd700' : '#ffffff',
+                  size: 2.2, kind: 'spark'
+                });
+              }
+              continue outer;
+            }
+          }
+        }
         // dash gives i-frames: bullets fly through you
         if (b.owner !== 0 && p.alive && p.dashT <= 0 && Math.hypot(p.x - b.x, p.y - b.y) < p.r - 1) {
           endTrail(b);
@@ -2450,7 +2603,14 @@ export class Game {
                 break;
               }
               if (pk.type === 'katana') this.sliceEnemy(e, Math.atan2(dy, dx), 800, 'FLYING SLICE');
-              else if (WEAPONS[pk.type].blade) this.killEnemy(e, dx, dy, 700, 'THROW KILL');
+              else if (pk.type === 'nunchaku') {
+                this.knockdown(e, dx, dy, 240, 850, 'NUNCHAKU SMASH!');
+                e.doomed = true;
+                sfx.nunchakuHit();
+                this.shake = Math.max(this.shake, 10);
+                this.hitstop = 0.06;
+                this.slowmo = Math.max(this.slowmo, 0.25);
+              } else if (WEAPONS[pk.type].blade) this.killEnemy(e, dx, dy, 700, 'THROW KILL');
               else this.knockdown(e, dx, dy, 150, 440, 'THROW HIT');
               pk.vx *= -0.25; pk.vy *= -0.25;
               pk.thrown = false;
@@ -2647,6 +2807,34 @@ export class Game {
       case 'katana':
         rect(-3, -1.4, 8, 2.8); rect(5, -3, 1.6, 6);
         ctx.beginPath(); ctx.moveTo(6.6, -1.2); ctx.lineTo(34, -1.6); ctx.lineTo(37, 0); ctx.lineTo(6.6, 1.2); ctx.closePath(); ctx.fill(); ctx.stroke(); break;
+      case 'nunchaku': {
+        // Baton 1 (held in hand)
+        ctx.fillStyle = '#1c1c1f';
+        ctx.fillRect(-2, -1.8, 16, 3.6);
+        ctx.fillStyle = '#d4af37';
+        ctx.fillRect(-2, -1.9, 2.5, 3.8);
+        ctx.fillRect(11, -2, 3, 4);
+        // Interlinked chain links
+        ctx.strokeStyle = '#d4af37';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.ellipse(15.5, 0, 2.6, 1.4, 0, 0, Math.PI * 2);
+        ctx.ellipse(19.5, 0, 2.6, 1.4, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // Baton 2 (dynamic spinning inertia)
+        ctx.save();
+        const spinOsc = Math.sin(this.time * 22) * 0.45 + 0.85;
+        ctx.translate(22, 0);
+        ctx.rotate(spinOsc);
+        ctx.fillStyle = '#d4af37';
+        ctx.fillRect(0, -2, 3, 4);
+        ctx.fillStyle = '#1c1c1f';
+        ctx.fillRect(3, -1.8, 16, 3.6);
+        ctx.fillStyle = '#d4af37';
+        ctx.fillRect(16.5, -1.9, 2.5, 3.8);
+        ctx.restore();
+        break;
+      }
       case 'pistol': rect(0, -2, 13, 4); rect(0, 1, 4, 4); break;
       case 'shotgun': rect(-6, -2.2, 30, 4.4); rect(8, -3, 8, 6); ctx.strokeRect(-6, -2.2, 30, 4.4); break;
       case 'uzi': rect(0, -2.5, 15, 5); rect(5, 2, 3, 6); break;
@@ -2743,12 +2931,28 @@ export class Game {
     ctx.rotate(angle + bodyTwist + wob + hurtLean);
     if (o.recoil) ctx.translate(-o.recoil * 30, 0);
 
+    const skin = this.skin || 'superhot';
+    const isStick = skin === 'stickman';
+    const isNeon = skin === 'neon_shapes';
+    const isCyber = skin === 'cyber_bot';
+    const isSuper = skin === 'superhot';
+
     // Compact trailing feet stay close to the body silhouette in the top-down view.
     const st = Math.sin(phase) * 1.8 * gait;
     const st2 = Math.sin(phase + Math.PI) * 1.8 * gait;
-    const footC = enemy ? '#bd2630' : '#24252a';
-    const legShine = enemy ? '#ff8c80' : '#777980';
+    const footC = enemy
+      ? isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#7a1c22' : '#bd2630'
+      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#2b303a' : isSuper ? '#8a94a6' : '#24252a';
+    const legShine = enemy
+      ? isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#c9343f' : '#ff8c80'
+      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#f59e0b' : isSuper ? '#eef2f7' : '#777980';
+
     const shoe = (sx: number, sy: number) => {
+      if (isStick) {
+        ctx.fillStyle = footC;
+        ctx.beginPath(); ctx.arc(sx, sy, 2.8, 0, Math.PI * 2); ctx.fill();
+        return;
+      }
       const sg = ctx.createLinearGradient(sx - 3, sy - 2, sx + 3, sy + 2);
       sg.addColorStop(0, legShine);
       sg.addColorStop(0.36, footC);
@@ -2785,8 +2989,12 @@ export class Game {
       ctx.restore();
     }
 
-    const armC = enemy ? '#e3261d' : '#1c1c1c';
-    const armHi = enemy ? '#ff7165' : '#64666c';
+    const armC = enemy
+      ? isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#a82c35' : '#e3261d'
+      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#374151' : isSuper ? '#ced5e0' : '#1c1c1c';
+    const armHi = enemy
+      ? isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#e54d58' : '#ff7165'
+      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#9ca3af' : isSuper ? '#ffffff' : '#64666c';
     if (o.held) {
       // Captive raises both arms; the sharp shoulder silhouette reads clearly at game scale.
       this.drawLimb(ctx, 1, -7.6, 2, -12, 6.4, armC, armHi);
@@ -2869,6 +3077,13 @@ export class Game {
             ctx.strokeStyle = `rgba(224,20,30,${0.8 * fade})`;
             ctx.lineWidth = 0.8;
             ctx.beginPath(); ctx.arc(0, 0, r1 + 0.5, head, head - dir * total * 0.5, dir > 0); ctx.stroke();
+          } else if (weapon === 'nunchaku') {
+            ctx.strokeStyle = `rgba(245,185,45,${0.95 * fade})`;
+            ctx.lineWidth = 2.4;
+            ctx.beginPath(); ctx.arc(0, 0, r1 + 4, head, head - dir * total * 0.85, dir > 0); ctx.stroke();
+            ctx.strokeStyle = `rgba(255,235,120,${0.75 * fade})`;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.arc(0, 0, r1 + 1, head, head - dir * total * 0.6, dir > 0); ctx.stroke();
           } else {
             ctx.strokeStyle = `rgba(133,139,148,${0.35 * fade})`;
             ctx.lineWidth = 0.8;
@@ -2880,7 +3095,9 @@ export class Game {
         const prog = attackAnim > 0 ? 1 - attackAnim / 0.2 : 0;
         swing = -1.1 + prog * 2.4;
         if (windup > 0) swing = -1.6;
-        if (!attackAnim && !windup) swing = 0.6;
+        if (!attackAnim && !windup) {
+          swing = weapon === 'nunchaku' ? 0.48 + Math.sin(this.time * 9) * 0.22 : 0.6;
+        }
       }
       ctx.save();
       ctx.translate(0, 8.2);
@@ -2918,14 +3135,113 @@ export class Game {
       }
     }
 
-    // crystalline body
+    // ---------------- Torso & Head Render based on skin ----------------
+    if (isStick) {
+      // STICKMAN SILHOUETTE & HEAD
+      const flash = (o.flash || 0) > 0;
+      const stickColor = flash ? '#ffffff' : enemy ? '#e51d2e' : '#14171a';
+      const jointColor = flash ? '#ffffff' : enemy ? '#ff858e' : '#ffffff';
+      const headFill = flash ? '#ffffff' : enemy ? '#ff3b4b' : '#1c2024';
+      const headOutline = flash ? '#ffe0e0' : enemy ? '#9b111e' : '#f8f9fa';
+
+      ctx.strokeStyle = stickColor;
+      ctx.lineWidth = 4.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(1, -9);
+      ctx.lineTo(1, 9);
+      ctx.moveTo(-5, 0);
+      ctx.lineTo(2, 0);
+      ctx.stroke();
+
+      ctx.fillStyle = jointColor;
+      ctx.beginPath();
+      ctx.arc(1, 0, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Circular Stickman Head
+      ctx.fillStyle = headFill;
+      ctx.strokeStyle = headOutline;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(4, 0, 7.0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Forward-facing eye / visor indicator
+      ctx.fillStyle = flash ? '#ffffff' : enemy ? '#ffe6e8' : '#00d2ff';
+      ctx.beginPath();
+      ctx.arc(8, 0, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    if (isNeon) {
+      // NEON GEOMETRIC SHAPES
+      const flash = (o.flash || 0) > 0;
+      const neonCol = flash ? '#ffffff' : enemy ? '#ff1e3c' : '#00e5ff';
+      const coreCol = flash ? '#ffffff' : enemy ? '#ff8090' : '#7df9ff';
+      const bodyDark = flash ? '#ffffff' : enemy ? '#200810' : '#091622';
+
+      ctx.fillStyle = bodyDark;
+      ctx.strokeStyle = neonCol;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      if (enemy) {
+        ctx.moveTo(9, 0); ctx.lineTo(4, -8); ctx.lineTo(-6, -7); ctx.lineTo(-9, 0); ctx.lineTo(-6, 7); ctx.lineTo(4, 8); ctx.closePath();
+      } else {
+        ctx.moveTo(11, 0); ctx.lineTo(-8, -10); ctx.lineTo(-4, 0); ctx.lineTo(-8, 10); ctx.closePath();
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = coreCol;
+      ctx.beginPath();
+      ctx.moveTo(3, 0); ctx.lineTo(0, -3.5); ctx.lineTo(-3, 0); ctx.lineTo(0, 3.5); ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    if (isCyber) {
+      // CYBER MECHA SQUIRCLE
+      const flash = (o.flash || 0) > 0;
+      const plateCol = flash ? '#ffffff' : enemy ? '#7a1c22' : '#2b303a';
+      const metalShine = flash ? '#ffffff' : enemy ? '#c9343f' : '#4b5563';
+      const visorCol = flash ? '#ffffff' : enemy ? '#ff2b3d' : '#f59e0b';
+
+      ctx.fillStyle = plateCol;
+      ctx.strokeStyle = metalShine;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.roundRect(-7, -9, 14, 18, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = visorCol;
+      ctx.beginPath();
+      ctx.roundRect(3, -5, 4.5, 10, 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    // crystalline body (Superhot & Classic)
     const pts = humanTorsoPoints(facets);
     const n = pts.length;
     const flash = (o.flash || 0) > 0;
     const g = ctx.createLinearGradient(-8, -13, 8, 13);
-    if (flash) { g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#ffe3df'); }
-    else if (enemy) { g.addColorStop(0, '#ff998d'); g.addColorStop(0.32, '#f45c5b'); g.addColorStop(0.72, '#dd3945'); g.addColorStop(1, '#ac2939'); }
-    else { g.addColorStop(0, '#4a4a4a'); g.addColorStop(0.5, '#1d1d1d'); g.addColorStop(1, '#050505'); }
+    if (flash) {
+      g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#ffe3df');
+    } else if (enemy) {
+      g.addColorStop(0, '#ff998d'); g.addColorStop(0.32, '#f45c5b'); g.addColorStop(0.72, '#dd3945'); g.addColorStop(1, '#ac2939');
+    } else if (isSuper) {
+      // Superhot Player is crystalline white / ice prism!
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.38, '#f1f5f9'); g.addColorStop(0.74, '#cbd5e1'); g.addColorStop(1, '#94a3b8');
+    } else {
+      g.addColorStop(0, '#4a4a4a'); g.addColorStop(0.5, '#1d1d1d'); g.addColorStop(1, '#050505');
+    }
     ctx.fillStyle = g;
     ctx.beginPath();
     pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
@@ -2938,18 +3254,22 @@ export class Game {
     ctx.restore();
     for (let i = 0; i < n; i += 2) {
       const a = pts[i], b = pts[(i + 1) % n];
-      ctx.fillStyle = enemy ? 'rgba(126,18,37,0.12)' : 'rgba(255,255,255,0.055)';
+      ctx.fillStyle = enemy
+        ? 'rgba(126,18,37,0.12)'
+        : isSuper
+        ? 'rgba(0,195,255,0.08)'
+        : 'rgba(255,255,255,0.055)';
       ctx.beginPath(); ctx.moveTo(1, 0); ctx.lineTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.closePath(); ctx.fill();
     }
     // moving specular sheen (superhot glass look)
-    if (enemy && !flash) {
+    if (!flash && (enemy || isSuper)) {
       const sh = ((this.time * 0.6 + x * 0.01) % 2) - 0.5;
       ctx.save();
       ctx.beginPath();
       pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
       ctx.closePath();
       ctx.clip();
-      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
       ctx.beginPath(); ctx.moveTo(-10 + sh * 18, -14); ctx.lineTo(-5 + sh * 18, -14); ctx.lineTo(3 + sh * 18, 14); ctx.lineTo(-2 + sh * 18, 14); ctx.closePath();
       ctx.fill();
       ctx.fillStyle = 'rgba(255,245,238,0.2)';
@@ -2963,7 +3283,13 @@ export class Game {
       ctx.fillStyle = 'rgba(134,12,31,0.09)';
       ctx.beginPath(); ctx.moveTo(1, -2); ctx.lineTo(7, -5); ctx.lineTo(6, 5); ctx.lineTo(1, 8); ctx.closePath(); ctx.fill();
     }
-    ctx.fillStyle = flash ? '#fff' : enemy ? '#ff7b71' : '#222327';
+    ctx.fillStyle = flash
+      ? '#fff'
+      : enemy
+      ? '#ff7b71'
+      : isSuper
+      ? '#f8fafc'
+      : '#222327';
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + 0.3;
@@ -2972,13 +3298,21 @@ export class Game {
     }
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = enemy ? 'rgba(255,238,230,0.62)' : 'rgba(255,255,255,0.22)';
+    ctx.fillStyle = enemy
+      ? 'rgba(255,238,230,0.62)'
+      : isSuper
+      ? 'rgba(255,255,255,0.65)'
+      : 'rgba(255,255,255,0.22)';
     ctx.beginPath(); ctx.moveTo(-1, -4); ctx.lineTo(3, -3); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
 
   drawDowned(e: Enemy) {
     const ctx = this.ctx;
+    const skin = this.skin || 'superhot';
+    const isStick = skin === 'stickman';
+    const isNeon = skin === 'neon_shapes';
+
     ctx.save();
     ctx.translate(e.x, e.y);
     const speed = Math.hypot(e.vx, e.vy);
@@ -2992,8 +3326,11 @@ export class Game {
     ctx.translate(0, -air);
     ctx.rotate(e.downAngle);
     const wig = e.executing ? Math.sin(this.time * 40) * 2 : Math.sin(this.time * 13 + e.id) * (e.launched ? 2.4 : 0.8);
-    const dark = e.hitFlash > 0 ? '#fff' : '#d94750', mid = e.hitFlash > 0 ? '#fff' : '#ef5a60', light = e.hitFlash > 0 ? '#fff' : '#ff9b8e';
-    // Limbs stay articulated, but flop independently like a small crystal ragdoll.
+    const dark = e.hitFlash > 0 ? '#fff' : isStick ? '#e51d2e' : '#d94750';
+    const mid = e.hitFlash > 0 ? '#fff' : isStick ? '#ff4050' : '#ef5a60';
+    const light = e.hitFlash > 0 ? '#fff' : isStick ? '#ff858e' : '#ff9b8e';
+
+    // Limbs stay articulated, but flop independently
     this.drawLimb(ctx, -7, -4, -12 + wig * 0.35, -9, 5.2, dark, light);
     this.drawLimb(ctx, -12 + wig * 0.35, -9, -18 + wig, -13, 4.4, mid, light);
     this.drawLimb(ctx, -7, 4, -12 - wig * 0.3, 9, 5.2, dark, light);
@@ -3004,6 +3341,44 @@ export class Game {
     this.drawLimb(ctx, 0 + wig * 0.4, 12, -6 + wig, 14, 5.2, mid, light);
     this.drawHand(ctx, -6 - wig, -14, 3.6, -2.6, mid, light, -1);
     this.drawHand(ctx, -6 + wig, 14, 3.6, 2.6, mid, light, 1);
+
+    if (isStick) {
+      // Stickman downed torso & knocked-out circle head
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 4.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(8, 0); ctx.stroke();
+
+      ctx.fillStyle = mid;
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 2.0;
+      ctx.beginPath(); ctx.arc(15, 0, 6.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+      // Knocked-out 'X' eyes
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(13, -2); ctx.lineTo(17, 2);
+      ctx.moveTo(17, -2); ctx.lineTo(13, 2);
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
+
+    if (isNeon) {
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(-10, -5); ctx.lineTo(-4, -8); ctx.lineTo(6, -7); ctx.lineTo(10, -3); ctx.lineTo(9, 4); ctx.lineTo(3, 8); ctx.lineTo(-7, 7); ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,30,60,0.2)';
+      ctx.fill();
+      ctx.fillStyle = dark;
+      ctx.beginPath(); ctx.arc(15, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
 
     const g = ctx.createLinearGradient(-14, -9, 12, 10);
     if (e.hitFlash > 0) { g.addColorStop(0, '#fff'); g.addColorStop(1, '#ffe1dc'); }

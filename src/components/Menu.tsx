@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { LEVELS } from '../game/levels';
 import { Floorplan } from './Floorplan';
 import { Icon } from './Icon';
+import { SKINS, type SkinId } from '../game/skins';
+import { SkinSelectorModal } from './SkinSelectorModal';
 
 interface MenuProps {
   unlocked: number;
   best: Record<number, number>;
   selected: number;
+  currentSkin: SkinId;
+  onSelectSkin: (skin: SkinId) => void;
   onSelect: (level: number) => void;
   onStart: () => void;
   onGuide: () => void;
@@ -21,6 +25,8 @@ export function Menu({
   unlocked,
   best,
   selected,
+  currentSkin,
+  onSelectSkin,
   onSelect,
   onStart,
   onGuide,
@@ -33,6 +39,7 @@ export function Menu({
   const [floorSelectOpen, setFloorSelectOpen] = useState(false);
   const [challengesOpen, setChallengesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [skinSelectOpen, setSkinSelectOpen] = useState(false);
 
   const level = LEVELS[selected] || LEVELS[0];
   const totalBest = Object.values(best).reduce((sum, score) => sum + score, 0);
@@ -123,6 +130,17 @@ export function Menu({
         </div>
 
         <nav className="flex items-center gap-3" aria-label="Quick settings">
+          <button
+            type="button"
+            onClick={() => setSkinSelectOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-['IBM_Plex_Mono'] border border-[#deded8] text-[#1a1d1f] hover:border-[#e51d2e] hover:text-[#e51d2e] bg-white transition-colors cursor-pointer shadow-xs"
+            title="Pilih Skin Bentuk Karakter"
+          >
+            <span className="w-2 h-2 rounded-full bg-[#e51d2e] inline-block" />
+            <span className="hidden sm:inline">SKIN:</span>
+            <span className="font-bold">{SKINS[currentSkin]?.name.split('//')[0].trim() || 'SUPERHOT'}</span>
+          </button>
+
           <button
             type="button"
             onClick={onToggleControls}
@@ -231,6 +249,17 @@ export function Menu({
               className="text-left text-[#1a1d1f] hover:text-[#e51d2e] transition-colors cursor-pointer w-fit"
             >
               CHALLENGES
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSkinSelectOpen(true)}
+              className="text-left text-[#1a1d1f] hover:text-[#e51d2e] transition-colors cursor-pointer w-fit flex items-center gap-2"
+            >
+              <span>SKIN KARAKTER</span>
+              <span className="font-['IBM_Plex_Mono'] text-[10px] tracking-wider bg-[#1a1d1f] text-white px-2 py-0.5 self-center">
+                {SKINS[currentSkin]?.badge || 'SHAPES'}
+              </span>
             </button>
 
             <button
@@ -521,6 +550,25 @@ export function Menu({
 
               <div className="flex items-center justify-between p-4 border border-[#deded8] bg-white">
                 <div>
+                  <div className="font-bold text-sm text-[#1a1d1f]">SKIN BENTUK KARAKTER (SHAPES)</div>
+                  <div className="text-xs text-[#6b726a] mt-0.5">
+                    Pilih bentuk: Superhot Glass, Stickman, Neon Geometric, dll.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setSkinSelectOpen(true);
+                  }}
+                  className="px-4 py-2 font-['IBM_Plex_Mono'] font-bold text-xs border border-[#e51d2e] bg-[#e51d2e0c] text-[#e51d2e] hover:bg-[#e51d2e] hover:text-white transition-colors cursor-pointer"
+                >
+                  PILIH SKIN
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-4 border border-[#deded8] bg-white">
+                <div>
                   <div className="font-bold text-sm text-[#1a1d1f]">PANDUAN KONTROL LENGKAP</div>
                   <div className="text-xs text-[#6b726a] mt-0.5">
                     Buka buku panduan taktis WASD, combat, dan tombol aksi
@@ -540,6 +588,18 @@ export function Menu({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ===== MODAL: SKIN SELECTOR ===== */}
+      {skinSelectOpen && (
+        <SkinSelectorModal
+          currentSkin={currentSkin}
+          onSelectSkin={(id) => {
+            onSelectSkin(id);
+            setNotice(`Skin ${SKINS[id]?.name || id} aktif.`);
+          }}
+          onClose={() => setSkinSelectOpen(false)}
+        />
       )}
 
       {notice && (

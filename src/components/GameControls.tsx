@@ -3,6 +3,8 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { Game, GameSnapshot } from '../game/engine';
 import { LEVELS } from '../game/levels';
 import { Icon } from './Icon';
+import { SKINS, type SkinId } from '../game/skins';
+import { SkinSelectorModal } from './SkinSelectorModal';
 import '../game-controls.css';
 
 interface JoystickProps {
@@ -149,13 +151,17 @@ interface GameControlsProps {
   snapshot: GameSnapshot | null;
   enabled: boolean;
   rotateRequired: boolean;
+  currentSkin?: SkinId;
+  onSelectSkin?: (skin: SkinId) => void;
   onToggle: () => void;
   onLandscape: () => void;
 }
 
-export function GameControls({ game, snapshot, enabled, rotateRequired, onToggle, onLandscape }: GameControlsProps) {
+export function GameControls({ game, snapshot, enabled, rotateRequired, currentSkin, onSelectSkin, onToggle, onLandscape }: GameControlsProps) {
   const primaryButton = useRef<HTMLButtonElement>(null);
   const rotateButton = useRef<HTMLButtonElement>(null);
+  const [skinModalOpen, setSkinModalOpen] = useState(false);
+  const activeSkin = currentSkin || snapshot?.skin || 'superhot';
   const state = snapshot?.state || 'intro';
   const showDialog = state === 'paused' || state === 'dead' || !!snapshot?.showResults;
   const active = !!game && !showDialog && !rotateRequired;
@@ -169,6 +175,17 @@ export function GameControls({ game, snapshot, enabled, rotateRequired, onToggle
     <div className={`game-interface${enabled ? ' has-touch-controls' : ''}`}>
       {!showDialog && !rotateRequired && (
         <div className="game-toolbar">
+          <button
+            type="button"
+            className="game-tool-button"
+            onClick={() => setSkinModalOpen(true)}
+            aria-label="Pilih skin bentuk karakter"
+            title="Ganti Skin Karakter"
+          >
+            <span className="w-2 h-2 rounded-full bg-[#e51d2e] inline-block mr-1" />
+            <span className="hidden sm:inline">SKIN:</span>
+            <span className="font-bold">{SKINS[activeSkin]?.name.split('//')[0].trim() || 'SUPERHOT'}</span>
+          </button>
           <button
             type="button"
             className={`game-tool-button mobile-controls-toggle${enabled ? ' is-on' : ''}`}
@@ -400,6 +417,16 @@ export function GameControls({ game, snapshot, enabled, rotateRequired, onToggle
                 </button>
                 <button
                   type="button"
+                  className="font-['IBM_Plex_Mono'] text-xs tracking-[0.16em] text-[#1a1d1f] hover:text-[#e51d2e] border border-[#deded8] hover:border-[#e51d2e] bg-white uppercase py-2.5 px-3 transition-colors cursor-pointer flex items-center justify-between"
+                  onClick={() => setSkinModalOpen(true)}
+                >
+                  <span>GANTI SKIN KARAKTER</span>
+                  <span className="font-bold text-[#e51d2e]">
+                    {SKINS[activeSkin]?.name.split('//')[0].trim()} →
+                  </span>
+                </button>
+                <button
+                  type="button"
                   className="font-['IBM_Plex_Mono'] text-xs tracking-[0.2em] text-[#6b726a] hover:text-[#1a1d1f] uppercase py-2 transition-colors cursor-pointer text-center"
                   onClick={() => game.quit()}
                 >
@@ -409,6 +436,17 @@ export function GameControls({ game, snapshot, enabled, rotateRequired, onToggle
             </section>
           )}
         </div>
+      )}
+
+      {skinModalOpen && (
+        <SkinSelectorModal
+          currentSkin={activeSkin}
+          onSelectSkin={(id) => {
+            game?.setSkin(id);
+            onSelectSkin?.(id);
+          }}
+          onClose={() => setSkinModalOpen(false)}
+        />
       )}
 
       {rotateRequired && (

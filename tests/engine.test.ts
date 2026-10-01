@@ -393,3 +393,111 @@ test('buffered combat inputs trigger smoothly when cooldown clears', () => {
   assert.equal(game.dashBuffer, 0, 'dash buffer consumed');
 });
 
+test('nunchaku executes a 4-hit combo chain culminating in a 360 degree cyclone finisher', () => {
+  const game = fixture();
+  game.player.weapon = 'nunchaku';
+
+  // Hit 0
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 1);
+  assert.equal(game.player.swing?.spin, false);
+
+  // Hit 1
+  game.player.meleeWin = 0.5;
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 2);
+
+  // Hit 2
+  game.player.meleeWin = 0.5;
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 3);
+
+  // Hit 3: Finisher (360 Cyclone) strikes target and launches it!
+  const target = enemy(game, 195, 160);
+  game.player.meleeWin = 0.5;
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 0); // resets chain
+  assert.equal(game.player.swing?.spin, true, 'finisher is a 360 spin cyclone');
+  assert.ok(target.launched, 'target is launched by cyclone');
+  assert.equal(target.doomed, true);
+});
+
+test('nunchaku swing deflects incoming enemy bullets back toward crosshair', () => {
+  const game = fixture();
+  game.player.weapon = 'nunchaku';
+  game.player.attackAnim = 0.15;
+  game.player.angle = 0; // facing right
+
+  // Enemy bullet flying left toward player
+  game.bullets.push({
+    x: 185, y: 160, sx: 300, sy: 160,
+    vx: -900, vy: 0, owner: 2, life: 0.8,
+  });
+
+  game.updateBullets(1 / 60);
+
+  assert.equal(game.bullets.length, 1);
+  const deflected = game.bullets[0];
+  assert.equal(deflected.owner, 0, 'deflected bullet now belongs to player');
+  assert.ok(deflected.vx > 0, 'bullet velocity reversed away from player');
+  assert.equal(deflected.dodged, true);
+  assert.ok(game.score > 0, 'score awarded for successful deflection');
+  assert.ok(game.particles.some((p) => p.kind === 'spark'), 'sparks generated on deflection');
+});
+
+test('thrown nunchaku flies with high spin and knocks out enemies on impact', () => {
+  const game = fixture();
+  const target = enemy(game, 240, 160);
+
+  game.pickups.push({
+    x: 230, y: 160, vx: 900, vy: 0,
+    angle: 0, spin: 45, type: 'nunchaku', ammo: 0,
+    thrown: true, hit: new Set(),
+  });
+
+  game.updatePickups(1 / 60);
+
+  assert.equal(target.state, 'down');
+  assert.equal(target.launched, true);
+  assert.equal(target.doomed, true);
+});
+
+test('enemies do not know player position behind closed doors and investigate doorway with tactical caution', () => {
+  const game = fixture();
+  // Build a separating wall between Room A (left, cols 1-7) and Room B (right, cols 9-22)
+  for (let y = 1; y < game.h - 1; y++) {
+    if (y !== 5) game.tiles[y][8] = '#';
+  }
+  // Place closed vertical door at col 8, row 5
+  const doorX = 8 * T, doorY = 5 * T + T / 2;
+  game.doors.push({
+    hx: doorX, hy: 5 * T, closed: Math.PI / 2, angle: Math.PI / 2, av: 0, pushT: 9, pusher: 'enemy',
+  });
+
+  // Guard in Room A
+  const guard = enemy(game, 4 * T, 5 * T + T / 2);
+  guard.state = 'idle';
+
+  // Player hidden in Room B making noise
+  game.player.x = 16 * T; game.player.y = 5 * T + T / 2;
+  assert.equal(game.canSee(guard), false, 'closed door and wall block sight into Room B');
+
+  game.noise(game.player.x, game.player.y, 600);
+
+  assert.equal(guard.state, 'search');
+  // Guard targets the closed doorway, NOT the hidden player's secret coordinates behind the door!
+  assert.equal(guard.lastX, doorX, 'guard investigates the doorway rather than x-ray wallhacking');
+
+  // As guard approaches closed door, guard pauses with caution before breaching
+  guard.x = doorX - 25; guard.y = 5 * T + T / 2;
+  game.updateEnemies(1 / 60);
+  assert.ok(guard.doorPause !== undefined, 'guard tactically pauses to check door');
+
+  // Once pause elapses, guard aggressively breaches/kicks the door ("NEKAT")
+  guard.doorPause = 0;
+  game.updateEnemies(1 / 60);
+  const dr = game.doors[0];
+  assert.ok(Math.abs(dr.av) >= 10, 'door kicked open forcefully');
+});
+
+
