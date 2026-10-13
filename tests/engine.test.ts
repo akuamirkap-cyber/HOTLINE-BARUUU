@@ -30,6 +30,7 @@ function fixture() {
     ctx, decalX: ctx, levelIndex: 0, nextId: 1, w: width, h: height,
     tiles: Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => x === 0 || y === 0 || x === width - 1 || y === height - 1 ? '#' : '.')),
     enemies: [], pickups: [], particles: [], shards: [], texts: [], bullets: [], trails: [], ghosts: [], halves: [], casings: [], doors: [], lights: [],
+    bikes: [], ridingBike: null,
     keys: new Set(), mouse: { x: 620, y: 300, down: false, pressed: false, right: false },
     touch: { enabled: false, moveX: 0, moveY: 0, aimX: 0, aimY: 0, aiming: false, angle: 0, focus: false },
     state: 'play', prevState: 'play', stateT: 0, totalEnemies: 2, time: 0,
@@ -469,7 +470,7 @@ test('enemies do not know player position behind closed doors and investigate do
     if (y !== 5) game.tiles[y][8] = '#';
   }
   // Place closed vertical door at col 8, row 5
-  const doorX = 8 * T, doorY = 5 * T + T / 2;
+  const doorX = 8 * T;
   game.doors.push({
     hx: doorX, hy: 5 * T, closed: Math.PI / 2, angle: Math.PI / 2, av: 0, pushT: 9, pusher: 'enemy',
   });
@@ -499,5 +500,202 @@ test('enemies do not know player position behind closed doors and investigate do
   const dr = game.doors[0];
   assert.ok(Math.abs(dr.av) >= 10, 'door kicked open forcefully');
 });
+
+test('Kawasaki Ninja motorcycle spawns near player with headlight enabled and can be mounted', () => {
+  const game = fixture();
+  const bike = game.spawnBike(game.player.x + 30, game.player.y, 0);
+  assert.equal(bike.headlight, true, 'Ninja front headlight is enabled');
+  assert.equal(bike.mounted, false, 'bike starts unmounted');
+
+  // Mount bike
+  game.mountBike(bike);
+  assert.equal(bike.mounted, true, 'bike is now mounted');
+  assert.equal(game.ridingBike, bike, 'game tracks active riding bike');
+  assert.equal(game.player.x, bike.x);
+  assert.equal(game.player.y, bike.y);
+
+  // Gas throttle
+  game.keys.add('KeyW');
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.ok(bike.speed > 0, 'bike accelerates when holding W');
+  assert.ok(bike.vx > 0, 'forward velocity increases');
+  game.keys.delete('KeyW');
+});
+
+test('bailing from Ninja motorcycle at high speed triggers ghost-ride momentum ("BABLAS")', () => {
+  const game = fixture();
+  const bike = game.spawnBike(game.player.x, game.player.y, 0);
+  game.mountBike(bike);
+  bike.speed = 300;
+  bike.vx = 300;
+  bike.vy = 0;
+
+  // Dismount while speeding
+  game.dismountBike(true);
+  assert.equal(bike.mounted, false, 'rider is off the bike');
+  assert.equal(game.ridingBike, null);
+  assert.equal(bike.ghostRiding, true, 'bike enters ghost-riding state');
+  assert.ok(bike.speed >= 380, 'bike maintains or boosts momentum forward');
+  assert.ok(game.player.dashT > 0, 'player executes tactical roll sideways');
+
+  // Updates while ghost-riding
+  const startX = bike.x;
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.ok(bike.x > startX, 'ghost-riding bike travels forward autonomously');
+});
+
+test('speeding or ghost-riding Ninja motorcycle smashes doors, rams enemies, and wall crashes', () => {
+  const game = fixture();
+  // 1. Door Smash
+  const doorX = 8 * T;
+  game.doors.push({
+    hx: doorX, hy: 5 * T, closed: Math.PI / 2, angle: Math.PI / 2, av: 0, pushT: 9, pusher: 'enemy',
+  });
+  const bike = game.spawnBike(doorX - 25, 5 * T + T / 2, 0);
+  bike.ghostRiding = true;
+  bike.speed = 420;
+  bike.vx = 420;
+  game.updateBikes(1 / 60, 1 / 60);
+  const dr = game.doors[0];
+  assert.ok(Math.abs(dr.av) >= 15, 'door smashed open by ghost-riding Ninja motorcycle');
+
+  // 2. Enemy Roadkill
+  const victim = enemy(game, bike.x + 30, bike.y);
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.equal(victim.state, 'down', 'enemy knocked down by motorcycle ram');
+  assert.equal(victim.doomed, true, 'enemy marked for roadkill death');
+
+  // 3. Wall Crash
+  const shardsBeforeCrash = game.shards.length;
+  const sparksBeforeCrash = game.particles.filter(p => p.kind === 'spark').length;
+  game.tiles[Math.floor(bike.y / T)][Math.floor((bike.x + 40) / T)] = '#';
+  bike.x = Math.floor((bike.x + 40) / T) * T - 10;
+  bike.vx = 400;
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.equal(bike.crashed, true, 'bike crashes upon hitting solid wall at high speed');
+  assert.equal(bike.ghostRiding, false, 'bike stops ghost-riding after crash');
+  assert.equal(game.shards.length, shardsBeforeCrash, 'no crystal shards emitted when motorcycle crashes into wall');
+  const sparksAfterCrash = game.particles.filter(p => p.kind === 'spark').length;
+  assert.equal(sparksAfterCrash, sparksBeforeCrash, 'zero crystal sparks emitted on wall crash');
+});
+
+test('motorcycle handling is comfortable, smooth, responsive with wall sliding and no mouse hijacking', () => {
+  const game = fixture();
+  const bike = game.spawnBike(game.player.x, game.player.y, 0);
+  game.mountBike(bike);
+
+  // Progressive throttle
+  game.keys.add('KeyW');
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.ok(bike.speed > 0 && bike.speed <= 300, 'accelerates smoothly within comfortable top speed');
+
+  // Test braking with S key
+  bike.speed = 250;
+  game.keys.delete('KeyW');
+  game.keys.add('KeyS');
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.ok(bike.speed < 250, 'S key brakes progressively without jerky lockup');
+
+  // Test steering with A/D
+  game.keys.delete('KeyS');
+  game.keys.add('KeyA');
+  const startAng = bike.angle;
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.ok(bike.angle < startAng, 'steers smoothly to the left');
+
+  // Wall sliding while mounted
+  game.tiles[Math.floor(bike.y / T)][Math.floor((bike.x + 30) / T)] = '#';
+  bike.x = Math.floor((bike.x + 30) / T) * T - 8;
+  bike.vx = 200;
+  bike.vy = 100;
+  bike.speed = 220;
+  game.updateBikes(1 / 60, 1 / 60);
+  assert.equal(bike.mounted, true, 'player stays mounted safely during wall contact');
+  assert.equal(game.player.hp, 3, 'player does not take damage from wall contact');
+  assert.equal(game.shards.length, 0, 'zero crystal shards during wall contact');
+});
+
+test('katana samurai combo executes 3-hit chain with flash step lunge and Senpuu 360 cyclone', () => {
+  const game = fixture();
+  game.player.weapon = 'katana';
+
+  // Hit 0: Kesa-Giri (Diagonal cut) + Flash Step Lunge
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 1);
+  assert.equal(game.player.swing?.spin, false);
+  assert.ok(game.ghosts.length > 0, 'flash step spawns afterimage ghost trail');
+  assert.ok(game.player.vx > 0, 'forward momentum lunge triggered');
+
+  // Hit 1: Gyaku-Kesa (Reverse cut)
+  game.player.meleeWin = 0.5;
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 2);
+
+  // Hit 2: Finisher (Senpuu 360 Cyclone)
+  const target = enemy(game, game.player.x + 35, game.player.y);
+  game.player.meleeWin = 0.5;
+  game.playerMelee();
+  assert.equal(game.player.meleeStep, 0, 'combo chain resets after finisher');
+  assert.equal(game.player.swing?.spin, true, 'finisher is a 360 spin cyclone');
+  assert.equal(game.enemies.includes(target), false, 'target sliced by Senpuu cyclone');
+  assert.equal(game.halves.length, 2, 'target severed in two halves');
+});
+
+test('katana slices incoming enemy bullets with Zantetsuken deflection', () => {
+  const game = fixture();
+  game.player.weapon = 'katana';
+  game.player.attackAnim = 0.15;
+  game.player.angle = 0; // facing right
+
+  // Enemy bullet flying left toward samurai
+  game.bullets.push({
+    x: game.player.x + 40, y: game.player.y, sx: 400, sy: game.player.y,
+    vx: -950, vy: 0, owner: 2, life: 0.8,
+  });
+
+  game.updateBullets(1 / 60);
+
+  assert.equal(game.bullets.length, 1);
+  const deflected = game.bullets[0];
+  assert.equal(deflected.owner, 0, 'deflected bullet belongs to player');
+  assert.ok(deflected.vx > 0, 'bullet deflected back forward toward crosshair');
+  assert.equal(deflected.pierce, true, 'deflected bullet has razor pierce property');
+});
+
+test('katana Shunpo flash step dash cleanly slices through enemies and deflects bullets', () => {
+  const game = fixture();
+  game.player.weapon = 'katana';
+  game.player.angle = 0; // facing right
+
+  const enemyVictim = enemy(game, game.player.x + 25, game.player.y);
+
+  // Trigger dash
+  game.spacePressed = true;
+  game.updatePlayer(1 / 60);
+
+  assert.equal(game.player.dashT > 0, true, 'katana triggers Shunpo flash step dash');
+  assert.ok(game.ghosts.length > 0, 'spawns samurai shadow clone afterimages');
+
+  // Dash step cuts through enemy
+  game.updatePlayer(1 / 60);
+  assert.equal(game.enemies.includes(enemyVictim), false, 'enemy sliced during Shunpo dash');
+  assert.equal(game.halves.length, 2, 'enemy split into halves by Shunpo Iai');
+
+  // Test bullet deflection during katana dash
+  game.bullets.push({
+    x: game.player.x + 35, y: game.player.y, sx: 400, sy: game.player.y,
+    vx: -950, vy: 0, owner: 3, life: 0.8,
+  });
+  game.updateBullets(1 / 60);
+  assert.equal(game.bullets[0].owner, 0, 'bullet deflected during katana Shunpo dash');
+
+  // Verify floor katana rendering with saya
+  assert.doesNotThrow(() => {
+    game.drawWeapon(game.ctx, 'katana');
+  }, 'drawWeapon for katana renders without error');
+});
+
+
+
 
 

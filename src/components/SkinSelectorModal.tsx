@@ -36,13 +36,13 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
       const w = canvas.width;
       const h = canvas.height;
 
-      // Background
+      // Background - Dark Obsidian
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = '#f0eee8';
+      ctx.fillStyle = '#090d16';
       ctx.fillRect(0, 0, w, h);
 
       // Subtle tactical floor grid
-      ctx.strokeStyle = '#e2dfd7';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.12)';
       ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 32) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
@@ -99,35 +99,35 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#0d0f1199] backdrop-blur-sm select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#080a0e]/85 backdrop-blur-md select-none"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl max-h-[92vh] bg-[#f5f4f0] border border-[#dcdcd6] p-5 sm:p-7 shadow-2xl text-left flex flex-col overflow-hidden"
+        className="relative w-full max-w-4xl max-h-[92vh] bg-[#0f141c] border border-white/15 p-5 sm:p-7 shadow-[0_25px_60px_rgba(0,0,0,0.8)] text-left flex flex-col overflow-hidden rounded-xs"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Pilih Skin Karakter"
       >
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-[#deded8] pb-3.5 mb-4 shrink-0">
+        <div className="flex items-start justify-between border-b border-white/10 pb-3.5 mb-4 shrink-0">
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-['Space_Grotesk'] font-bold text-xs tracking-[0.25em] text-[#e51d2e] uppercase">
-                SHAPE CUSTOMIZATION
+              <span className="font-['IBM_Plex_Mono'] font-bold text-xs tracking-[0.25em] text-[#38bdf8] uppercase">
+                SHAPE CUSTOMIZATION // ARSENAL
               </span>
-              <span className="font-['IBM_Plex_Mono'] text-[11px] text-[#6b7280]">
+              <span className="font-['IBM_Plex_Mono'] text-[11px] text-[#64748b]">
                 · {SKIN_LIST.length} PILIHAN BENTUK
               </span>
             </div>
-            <h2 className="font-['Anton'] text-3xl sm:text-4xl text-[#1a1d1f] uppercase mt-0.5">
-              <span className="text-[#e51d2e] mr-2">//</span>SKIN KARAKTER
+            <h2 className="font-['Anton'] text-3xl sm:text-4xl text-[#f8fafc] uppercase mt-0.5 flex items-center gap-2">
+              <span className="text-[#38bdf8]">//</span> SKIN KARAKTER
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center border border-[#dcdcd6] text-[#6b726a] hover:text-[#1a1d1f] hover:border-[#1a1d1f] transition-colors cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center border border-white/15 text-[#94a3b8] hover:text-white hover:border-white/40 transition-colors cursor-pointer rounded-xs"
             aria-label="Tutup"
           >
             ✕
@@ -138,7 +138,7 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
         <div className="grid grid-cols-1 md:grid-cols-12 gap-5 overflow-y-auto pr-1 flex-1">
           {/* Left Column: Skin List (7 cols) */}
           <div className="md:col-span-7 flex flex-col gap-2.5">
-            <div className="font-['IBM_Plex_Mono'] text-[11px] tracking-[0.16em] text-[#6b726a] uppercase mb-0.5">
+            <div className="font-['IBM_Plex_Mono'] text-[11px] tracking-[0.16em] text-[#94a3b8] uppercase mb-0.5">
               DAFTAR SKIN BENTUK (SHAPES):
             </div>
             {SKIN_LIST.map((skin) => {
@@ -149,43 +149,43 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
                   key={skin.id}
                   type="button"
                   onClick={() => setHighlightedSkin(skin.id)}
-                  className={`p-3.5 border text-left transition-all cursor-pointer relative ${
+                  className={`p-3.5 border text-left transition-all cursor-pointer relative rounded-xs ${
                     isHighlighted
-                      ? 'border-[#e51d2e] bg-[#e51d2e0a] shadow-sm'
-                      : 'border-[#deded8] hover:border-[#1a1d1f] bg-white'
+                      ? 'border-[#38bdf8] bg-[#38bdf818] shadow-[0_0_15px_rgba(56,189,248,0.15)]'
+                      : 'border-white/10 hover:border-white/30 bg-white/5 text-[#94a3b8]'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-['Anton'] text-xl sm:text-2xl text-[#1a1d1f] uppercase leading-none">
+                        <span className={`font-['Anton'] text-xl sm:text-2xl uppercase leading-none ${isHighlighted ? 'text-white' : 'text-[#cbd5e1]'}`}>
                           {skin.name}
                         </span>
                         {isSelected && (
-                          <span className="bg-[#e51d2e] text-white font-['IBM_Plex_Mono'] text-[9px] font-bold px-1.5 py-0.5 uppercase">
+                          <span className="bg-[#38bdf8] text-[#090d16] font-['IBM_Plex_Mono'] text-[9px] font-bold px-1.5 py-0.5 uppercase rounded-xs">
                             AKTIF
                           </span>
                         )}
                       </div>
-                      <div className="font-['Space_Grotesk'] text-xs font-semibold text-[#e51d2e] uppercase mt-0.5">
+                      <div className="font-['Space_Grotesk'] text-xs font-semibold text-[#38bdf8] uppercase mt-0.5">
                         {skin.tagline}
                       </div>
                     </div>
-                    <span className="font-['IBM_Plex_Mono'] text-[10px] text-[#6b7280] tracking-wider uppercase bg-[#f0eee8] px-2 py-0.5 border border-[#deded8]">
+                    <span className="font-['IBM_Plex_Mono'] text-[10px] text-[#94a3b8] tracking-wider uppercase bg-white/10 px-2 py-0.5 border border-white/10 rounded-xs">
                       {skin.badge}
                     </span>
                   </div>
 
-                  <p className="font-['Space_Grotesk'] text-xs text-[#525657] mt-2 leading-relaxed">
+                  <p className="font-['Space_Grotesk'] text-xs text-[#94a3b8] mt-2 leading-relaxed">
                     {skin.description}
                   </p>
 
-                  <div className="flex items-center gap-4 mt-2.5 pt-2 border-t border-[#f0eee8] font-['IBM_Plex_Mono'] text-[10px] text-[#6b7280]">
+                  <div className="flex items-center gap-4 mt-2.5 pt-2 border-t border-white/10 font-['IBM_Plex_Mono'] text-[10px] text-[#64748b]">
                     <div>
-                      PLAYER: <span className="text-[#1a1d1f] font-semibold">{skin.playerTag}</span>
+                      PLAYER: <span className="text-white font-semibold">{skin.playerTag}</span>
                     </div>
                     <div>
-                      ENEMY: <span className="text-[#e51d2e] font-semibold">{skin.enemyTag}</span>
+                      ENEMY: <span className="text-[#38bdf8] font-semibold">{skin.enemyTag}</span>
                     </div>
                   </div>
                 </button>
@@ -195,12 +195,12 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
 
           {/* Right Column: Live Interactive Visualizer (5 cols) */}
           <div className="md:col-span-5 flex flex-col gap-3">
-            <div className="font-['IBM_Plex_Mono'] text-[11px] tracking-[0.16em] text-[#6b726a] uppercase">
+            <div className="font-['IBM_Plex_Mono'] text-[11px] tracking-[0.16em] text-[#94a3b8] uppercase">
               LIVE PREVIEW (ANIMASI):
             </div>
 
             {/* Preview Canvas Box */}
-            <div className="relative border border-[#deded8] bg-white overflow-hidden shadow-sm flex flex-col items-center justify-center p-3">
+            <div className="relative border border-white/15 bg-[#090d16] overflow-hidden shadow-inner flex flex-col items-center justify-center p-3 rounded-xs">
               <canvas
                 ref={canvasRef}
                 width={260}
@@ -209,20 +209,20 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
               />
 
               {/* Watermark badge on canvas */}
-              <div className="absolute top-2.5 left-2.5 font-['IBM_Plex_Mono'] text-[9px] text-[#8b9196] uppercase bg-[#f5f4f0c0] px-1.5 py-0.5 border border-[#deded8]">
+              <div className="absolute top-2.5 left-2.5 font-['IBM_Plex_Mono'] text-[9px] text-[#94a3b8] uppercase bg-black/60 px-1.5 py-0.5 border border-white/10 rounded-xs">
                 {previewRole === 'player' ? 'PREVIEW: PEMAIN' : 'PREVIEW: MUSUH'}
               </div>
             </div>
 
             {/* Controls for Preview: Toggle Player vs Enemy */}
-            <div className="flex items-center gap-1.5 p-1 bg-[#eae8e1] border border-[#dcdcd6]">
+            <div className="flex items-center gap-1.5 p-1 bg-white/5 border border-white/10 rounded-xs">
               <button
                 type="button"
                 onClick={() => setPreviewRole('player')}
-                className={`flex-1 py-1.5 text-xs font-['IBM_Plex_Mono'] font-bold transition-all cursor-pointer ${
+                className={`flex-1 py-1.5 text-xs font-['IBM_Plex_Mono'] font-bold transition-all cursor-pointer rounded-xs ${
                   previewRole === 'player'
-                    ? 'bg-[#1a1d1f] text-white shadow-xs'
-                    : 'text-[#6b7280] hover:text-[#1a1d1f]'
+                    ? 'bg-[#38bdf8] text-[#090d16] shadow-sm'
+                    : 'text-[#94a3b8] hover:text-white'
                 }`}
               >
                 PEMAIN (PLAYER)
@@ -230,10 +230,10 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
               <button
                 type="button"
                 onClick={() => setPreviewRole('enemy')}
-                className={`flex-1 py-1.5 text-xs font-['IBM_Plex_Mono'] font-bold transition-all cursor-pointer ${
+                className={`flex-1 py-1.5 text-xs font-['IBM_Plex_Mono'] font-bold transition-all cursor-pointer rounded-xs ${
                   previewRole === 'enemy'
-                    ? 'bg-[#e51d2e] text-white shadow-xs'
-                    : 'text-[#6b7280] hover:text-[#1a1d1f]'
+                    ? 'bg-[#f43f5e] text-white shadow-sm'
+                    : 'text-[#94a3b8] hover:text-white'
                 }`}
               >
                 MUSUH (ENEMY)
@@ -247,10 +247,10 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
                   key={pw.label}
                   type="button"
                   onClick={() => setPreviewWeapon(pw.id)}
-                  className={`py-1 px-2 text-[10px] font-['IBM_Plex_Mono'] border text-center transition-colors cursor-pointer ${
+                  className={`py-1.5 px-2 text-[10px] font-['IBM_Plex_Mono'] border text-center transition-colors cursor-pointer rounded-xs ${
                     previewWeapon === pw.id
-                      ? 'border-[#1a1d1f] bg-white text-[#1a1d1f] font-bold'
-                      : 'border-[#deded8] bg-[#f5f4f0] text-[#6b726a] hover:border-[#1a1d1f]'
+                      ? 'border-[#38bdf8] bg-[#38bdf820] text-[#38bdf8] font-bold'
+                      : 'border-white/10 bg-white/5 text-[#94a3b8] hover:border-white/30 hover:text-white'
                   }`}
                 >
                   {pw.label}
@@ -259,19 +259,19 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
             </div>
 
             {/* Selected Skin Overview Box */}
-            <div className="border border-[#deded8] bg-white p-3 space-y-1.5">
-              <div className="font-['Anton'] text-lg text-[#1a1d1f] uppercase leading-tight">
+            <div className="border border-white/10 bg-white/5 p-3 space-y-1.5 rounded-xs">
+              <div className="font-['Anton'] text-lg text-white uppercase leading-tight">
                 {selectedDef.name}
               </div>
-              <div className="font-['Space_Grotesk'] text-xs text-[#525657]">
+              <div className="font-['Space_Grotesk'] text-xs text-[#94a3b8]">
                 Kategori:{' '}
-                <span className="font-['IBM_Plex_Mono'] font-semibold text-[#1a1d1f]">
+                <span className="font-['IBM_Plex_Mono'] font-semibold text-white">
                   {selectedDef.category}
                 </span>
               </div>
-              <div className="font-['Space_Grotesk'] text-xs text-[#525657]">
+              <div className="font-['Space_Grotesk'] text-xs text-[#94a3b8]">
                 Badge:{' '}
-                <span className="font-['IBM_Plex_Mono'] font-semibold text-[#e51d2e]">
+                <span className="font-['IBM_Plex_Mono'] font-semibold text-[#38bdf8]">
                   {selectedDef.badge}
                 </span>
               </div>
@@ -281,7 +281,7 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
             <button
               type="button"
               onClick={() => handleApply(highlightedSkin)}
-              className="w-full bg-[#e51d2e] hover:bg-[#c91423] text-white font-['Anton'] tracking-[0.08em] text-lg uppercase py-3 px-4 flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-md mt-auto"
+              className="w-full bg-[#38bdf8] hover:bg-[#0ea5e9] text-[#090d16] font-['Anton'] tracking-[0.08em] text-lg uppercase py-3 px-4 flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-lg mt-auto rounded-xs font-bold"
             >
               <span>{currentSkin === highlightedSkin ? '✓ SKIN INI SEDANG AKTIF' : 'GUNAKAN SKIN INI'}</span>
             </button>
@@ -289,12 +289,12 @@ export function SkinSelectorModal({ currentSkin, onSelectSkin, onClose }: SkinSe
         </div>
 
         {/* Footer info */}
-        <div className="border-t border-[#deded8] pt-3 mt-4 flex items-center justify-between text-[11px] font-['IBM_Plex_Mono'] text-[#6b7280] uppercase shrink-0">
+        <div className="border-t border-white/10 pt-3 mt-4 flex items-center justify-between text-[11px] font-['IBM_Plex_Mono'] text-[#64748b] uppercase shrink-0">
           <div>SKIN BISA DIGANTI KAPAN SAJA LEWAT MENU ATAU PAUSE GAME</div>
           <button
             type="button"
             onClick={onClose}
-            className="hover:text-[#1a1d1f] underline cursor-pointer"
+            className="hover:text-white underline cursor-pointer"
           >
             TUTUP [ESC]
           </button>

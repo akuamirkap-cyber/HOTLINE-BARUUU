@@ -2,9 +2,9 @@
 .controls-dialog {
   --paper: #f5f4f0;
   --ink: #1a1d1f;
-  --muted: #6b726a;
+  --muted: #6f7472;
   --red: #e32636;
-  --line: #deded8;
+  --line: #e2e3dd;
   --mono: 'IBM Plex Mono', monospace;
   font-family: 'Space Grotesk', sans-serif;
   color: var(--ink);

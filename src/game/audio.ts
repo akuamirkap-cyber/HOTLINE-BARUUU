@@ -103,6 +103,31 @@ export const sfx = {
     noise(heavy ? 0.25 : 0.12, heavy ? 900 : 1400, 2, heavy ? 0.5 : 0.3, 'bandpass');
     if (heavy) tone(220, 0.2, 0.1, 'sine', 90);
   },
+  katanaSlash(heavy = false) {
+    // Sharp razor air-slice + resonant high-tensile steel whoosh
+    noise(heavy ? 0.22 : 0.13, heavy ? 2800 : 3600, 2.5, heavy ? 0.6 : 0.4, 'bandpass');
+    tone(heavy ? 680 : 850, heavy ? 0.18 : 0.11, 0.22, 'sine', heavy ? 180 : 260);
+    // Steel glint harmonic
+    tone(3400, 0.08, 0.12, 'triangle', 2200, 0.02);
+  },
+  katanaParry() {
+    // Resonant Japanese sword clink (Zantetsuken bullet deflection)
+    tone(3800, 0.32, 0.55, 'sine', 2800);
+    tone(5600, 0.22, 0.35, 'triangle', 4200, 0.01);
+    tone(210, 0.14, 0.45, 'triangle', 90);
+    noise(0.08, 8500, 0.8, 0.45, 'highpass');
+  },
+  katanaDraw() {
+    // Unsheathing steel sheen clink
+    tone(4200, 0.2, 0.25, 'sine', 3200);
+    noise(0.09, 6500, 2.0, 0.22, 'bandpass');
+  },
+  katanaDash() {
+    // Swift samurai flash step (Shunpo / Battojutsu lunge)
+    tone(1200, 0.12, 0.25, 'sine', 380);
+    noise(0.16, 4600, 2.2, 0.45, 'bandpass');
+    tone(4000, 0.08, 0.18, 'triangle', 2400);
+  },
   nunchakuSpin(heavy = false) {
     // Aerodynamic whirlwind whistle + chain links
     noise(heavy ? 0.24 : 0.14, heavy ? 1600 : 2200, 3, heavy ? 0.55 : 0.35, 'bandpass');
@@ -195,6 +220,23 @@ export const sfx = {
   },
   throwW() {
     noise(0.2, 800, 3, 0.3, 'bandpass');
+  },
+  bikeRev(pitch = 1.0) {
+    // 4-cylinder high-rev sportbike inline-4 roar
+    const baseFreq = 120 * pitch;
+    tone(baseFreq, 0.16, 0.25, 'sawtooth', baseFreq * 1.5);
+    tone(baseFreq * 2, 0.12, 0.14, 'sawtooth', baseFreq * 2.6);
+    noise(0.08, 1400, 1.5, 0.2, 'bandpass');
+  },
+  bikeSkid() {
+    noise(0.18, 2800, 2.5, 0.35, 'bandpass');
+    tone(420, 0.15, 0.15, 'triangle', 260);
+  },
+  bikeCrash() {
+    tone(65, 0.45, 0.95, 'sawtooth', 25);
+    tone(130, 0.3, 0.7, 'triangle', 45);
+    noise(0.4, 3400, 1.2, 0.9, 'bandpass');
+    noise(0.2, 7000, 0.8, 0.6, 'highpass');
   },
   death() {
     tone(200, 1.2, 0.6, 'sawtooth', 30);

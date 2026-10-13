@@ -67,7 +67,26 @@ interface Trail { x1: number; y1: number; x2: number; y2: number; life: number; 
 interface Ghost { x: number; y: number; angle: number; life: number; }
 interface Casing { x: number; y: number; z: number; vx: number; vy: number; vz: number; rot: number; vr: number; big: boolean; }
 interface Light { x: number; y: number; r: number; life: number; max: number; color: string; }
-interface Door { hx: number; hy: number; closed: number; angle: number; av: number; pushT: number; pusher: 'player' | 'enemy'; }
+export interface Bike {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  speed: number;
+  steerAngle: number;
+  lean: number;
+  mounted: boolean;
+  headlight: boolean;
+  ghostRiding: boolean;
+  skidT: number;
+  exhaustT: number;
+  engineSoundT: number;
+  hitEnemies: Set<number>;
+  crashed: boolean;
+}
+interface Door { hx: number; hy: number; closed: number; angle: number; av: number; pushT: number; pusher: 'player' | 'enemy'; bikeHitT?: number; }
 interface Shard { x: number; y: number; z: number; vz: number; vx: number; vy: number; rot: number; vr: number; size: number; color: string; pts: number[]; glint: boolean; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: 'spark' | 'flash' | 'ring' | 'star' | 'smoke' | 'cone' | 'slash'; angle?: number; }
 interface FText { x: number; y: number; text: string; life: number; color: string; size: number; }
@@ -188,6 +207,8 @@ export class Game {
   lastMouse = { x: 0, y: 0 };
   zp = 1;
   enemies: Enemy[] = [];
+  bikes: Bike[] = [];
+  ridingBike: Bike | null = null;
   pickups: Pickup[] = [];
   bullets: Bullet[] = [];
   doors: Door[] = [];
@@ -254,7 +275,14 @@ export class Game {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat || this.suspended) return;
       this.keys.add(e.code);
-      if (e.code === 'Space') { this.spacePressed = true; this.dashBuffer = 0.18; }
+      if (e.code === 'Space') {
+        if (this.ridingBike) {
+          this.dismountBike(true);
+        } else {
+          this.spacePressed = true;
+          this.dashBuffer = 0.18;
+        }
+      }
       if (e.code === 'KeyR') this.restart();
       if (e.code === 'KeyM') toggleMusic();
       if (e.code === 'KeyN') {
@@ -267,7 +295,18 @@ export class Game {
         setMusicDuck(this.state === 'dead' || this.state === 'complete');
         this.showHint(this.noSlowMo ? 'NO SLOW-MO — BULLET TIME OFF' : 'SLOW-MO ENABLED', 2.5);
       }
-      if (e.code === 'KeyF' || e.code === 'KeyE') this.kickBuffer = 0.22;
+      if (e.code === 'KeyF' || e.code === 'KeyE') {
+        if (this.ridingBike) {
+          this.dismountBike(true);
+        } else {
+          const nearBike = (this.bikes || []).find((b) => !b.mounted && Math.hypot(b.x - this.player.x, b.y - this.player.y) < 40);
+          if (nearBike) {
+            this.mountBike(nearBike);
+          } else {
+            this.kickBuffer = 0.22;
+          }
+        }
+      }
       if (e.code === 'KeyC') this.focusHeld = true;
       if (e.code === 'KeyT' && !this.noSlowMo) { this.superTime = !this.superTime; this.showHint(this.superTime ? 'SUPERHOT MODE: WAKTU HANYA BERJALAN SAAT KAMU BERGERAK' : 'SUPERHOT MODE: OFF', 2.5); }
       if (e.code === 'Escape') {
@@ -343,8 +382,21 @@ export class Game {
 
   pressTouchAction(action: 'kick' | 'action' | 'weapon') {
     if (this.suspended || !this.player.alive || !['intro', 'play', 'cleared'].includes(this.state)) return;
-    if (action === 'kick') this.kickBuffer = 0.22;
-    if (action === 'action') { this.spacePressed = true; this.dashBuffer = 0.18; }
+    if (this.ridingBike) {
+      this.dismountBike(true);
+      return;
+    }
+    if (action === 'kick') {
+      const nearBike = (this.bikes || []).find((b) => !b.mounted && Math.hypot(b.x - this.player.x, b.y - this.player.y) < 40);
+      if (nearBike) { this.mountBike(nearBike); return; }
+      this.kickBuffer = 0.22;
+    }
+    if (action === 'action') {
+      const nearBike = (this.bikes || []).find((b) => !b.mounted && Math.hypot(b.x - this.player.x, b.y - this.player.y) < 40);
+      if (nearBike) { this.mountBike(nearBike); return; }
+      this.spacePressed = true;
+      this.dashBuffer = 0.18;
+    }
     if (action === 'weapon') { this.mouse.right = true; this.weaponBuffer = 0.2; }
   }
 
@@ -402,15 +454,20 @@ export class Game {
   }
 
   getSnapshot(): GameSnapshot {
-    let action = this.hostage ? 'LEMPAR SANDERA' : this.player.exec ? 'EKSEKUSI' : 'SPRINT';
-    if (!this.hostage && !this.player.exec) {
-      let distance = Infinity;
-      for (const enemy of this.enemies) {
-        if (enemy.launched || enemy.state === 'hostage') continue;
-        const d = Math.hypot(enemy.x - this.player.x, enemy.y - this.player.y);
-        if (d < (enemy.state === 'down' ? 34 : 40) && d < distance) {
-          distance = d;
-          action = enemy.state === 'down' ? 'EKSEKUSI' : 'SANDERA';
+    let action = this.ridingBike ? 'LEPAS (GHOST-RIDE)' : this.hostage ? 'LEMPAR SANDERA' : this.player.exec ? 'EKSEKUSI' : 'SPRINT';
+    if (!this.ridingBike && !this.hostage && !this.player.exec) {
+      const nearBike = (this.bikes || []).find((b) => !b.mounted && Math.hypot(b.x - this.player.x, b.y - this.player.y) < 40);
+      if (nearBike) {
+        action = 'NAIK NINJA';
+      } else {
+        let distance = Infinity;
+        for (const enemy of this.enemies) {
+          if (enemy.launched || enemy.state === 'hostage') continue;
+          const d = Math.hypot(enemy.x - this.player.x, enemy.y - this.player.y);
+          if (d < (enemy.state === 'down' ? 34 : 40) && d < distance) {
+            distance = d;
+            action = enemy.state === 'down' ? 'EKSEKUSI' : 'SANDERA';
+          }
         }
       }
     }
@@ -418,7 +475,7 @@ export class Game {
       state: this.state, level: this.levelIndex, score: this.score, grade: this.grade(),
       focusPercent: Math.round(this.focus * 100), focusActive: this.focusActive,
       canFocus: !this.noSlowMo && this.focus > 0.02,
-      action, weaponAction: this.player.weapon ? 'LEMPAR' : 'AMBIL',
+      action, weaponAction: this.ridingBike ? 'GHOST RIDE' : this.player.weapon ? 'LEMPAR' : 'AMBIL',
       showResults: this.state === 'complete' && this.stateT >= 3,
       nextReady: this.state === 'complete' && this.stateT > 3.2,
       kills: this.kills,
@@ -471,6 +528,7 @@ export class Game {
     p.dashT = 0; p.dashCd = 0; p.comboStep = 0; p.comboWin = 0; p.hitCount = 0; p.hitCountT = 0; p.kickCd = 0; p.kickAnim = 0; p.lungeT = 0; p.recoil = 0;
     p.hp = 3; p.hpT = 0; p.hurtT = 0; p.swing = null; p.meleeStep = 0; p.meleeWin = 0;
     this.trails = []; this.ghosts = []; this.casings = []; this.lights = []; this.halves = [];
+    this.bikes = []; this.ridingBike = null;
     this.focus = 1; this.focusActive = false; this.kickBuffer = 0;
     this.hostage = null;
     p.vx = 0; p.vy = 0; p.moveSpeed = 0;
@@ -523,12 +581,40 @@ export class Game {
         this.pickups.push({ x: tx * T + T / 2, y: ty * T + T / 2, vx: 0, vy: 0, angle: -0.4 + i * 0.5, spin: 0, type: t, ammo: WEAPONS[t].ammo || 0, thrown: false, hit: new Set() });
       });
     }
+
+    // Spawn a Kawasaki Ninja sportbike near the player
+    let bikeX = p.x + Math.cos(p.angle) * 36;
+    let bikeY = p.y + Math.sin(p.angle) * 36;
+    const ptx = Math.floor(p.x / T), pty = Math.floor(p.y / T);
+    const candidates: { x: number; y: number; dist: number }[] = [];
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const tx = ptx + dx, ty = pty + dy;
+        if (this.tile(tx, ty) === '.' && !this.solidMove(tx, ty)) {
+          const cx = tx * T + T / 2, cy = ty * T + T / 2;
+          if (this.los(p.x, p.y, cx, cy)) {
+            candidates.push({ x: cx, y: cy, dist: Math.hypot(cx - p.x, cy - p.y) });
+          }
+        }
+      }
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
+    if (candidates.length > 0) {
+      bikeX = candidates[0].x;
+      bikeY = candidates[0].y;
+    } else {
+      bikeX = p.x + Math.cos(p.angle) * 20;
+      bikeY = p.y + Math.sin(p.angle) * 20;
+    }
+    this.spawnBike(bikeX, bikeY, p.angle);
+
     this.cam.x = p.x; this.cam.y = p.y;
     this.bakeStatic();
     this.state = 'intro';
     this.stateT = 0;
     setMusicDuck(false);
-    this.showHint(def.introHint || 'SPASI dekat musuh = sandera/perisai; SPACE lagi = lempar • N = no slow-mo • sprint: SPASI', 6);
+    this.showHint(def.introHint || 'DEKATI MOTOR NINJA & TEKAN [E/F] UNTUK NAIK • GAS: [W] • [SPACE/E/F] LEPAS & GHOST-RIDE! • N = no slow-mo', 6.5);
     this.emitUI(true);
   }
 
@@ -912,20 +998,45 @@ export class Game {
         cut, body, side, rot: 0, vr: side * rand(1.5, 4), facets: e.facets, t: 0,
       });
     }
-    // slash line + fine sparks, only a few chips (no shatter)
-    this.particles.push({ x: e.x, y: e.y, vx: 0, vy: 0, life: 0.28, max: 0.28, color: '#fff', size: 70, kind: 'slash', angle: cut });
-    for (let k = 0; k < 10; k++) {
-      const a = cut + (k % 2 ? Math.PI / 2 : -Math.PI / 2) + rand(-0.4, 0.4);
-      this.particles.push({ x: e.x + dx * rand(-10, 10), y: e.y + dy * rand(-10, 10), vx: Math.cos(a) * rand(80, 260), vy: Math.sin(a) * rand(80, 260), life: 0.25, max: 0.25, color: k % 3 ? '#ff3326' : '#fff', size: 1.4, kind: 'spark' });
+    // Japanese calligraphy blood brush slash decal on the floor
+    this.decalX.strokeStyle = 'rgba(165, 18, 30, 0.65)';
+    this.decalX.lineWidth = 3.6;
+    this.decalX.beginPath();
+    this.decalX.moveTo(e.x - Math.cos(cut) * 26, e.y - Math.sin(cut) * 26);
+    this.decalX.lineTo(e.x + Math.cos(cut) * 26, e.y + Math.sin(cut) * 26);
+    this.decalX.stroke();
+
+    // Arterial blood spray fan along cut normal
+    for (let k = 0; k < 12; k++) {
+      const sprayAng = cut + (k % 2 ? Math.PI / 2 : -Math.PI / 2) + rand(-0.4, 0.4);
+      this.particles.push({
+        x: e.x + dx * rand(-8, 8), y: e.y + dy * rand(-8, 8),
+        vx: Math.cos(sprayAng) * rand(90, 280), vy: Math.sin(sprayAng) * rand(90, 280),
+        life: 0.28, max: 0.28,
+        color: k % 4 === 0 ? '#ffffff' : k % 4 === 1 ? '#b80f1a' : '#ff2b3b',
+        size: rand(1.4, 2.8), kind: 'spark'
+      });
     }
+
+    // Slash line flash + sakura petals
+    this.particles.push({ x: e.x, y: e.y, vx: 0, vy: 0, life: 0.32, max: 0.32, color: '#fff', size: 85, kind: 'slash', angle: cut });
+    for (let k = 0; k < 5; k++) {
+      const sa = rand(0, Math.PI * 2);
+      this.particles.push({
+        x: e.x + rand(-6, 6), y: e.y + rand(-6, 6),
+        vx: Math.cos(sa) * rand(40, 140), vy: Math.sin(sa) * rand(40, 140),
+        life: 0.45, max: 0.45, color: '#ff758c', size: rand(2, 4), kind: 'spark'
+      });
+    }
+
     for (let k = 0; k < 6; k++) this.makeShard(e.x, e.y, cut + (k % 2 ? 1.57 : -1.57) + rand(-0.5, 0.5), rand(60, 160), rand(1.2, 2.5), '#ff2a1f', rand(40, 100));
     sfx.slice();
-    this.shake = Math.max(this.shake, 6);
-    this.hitstop = 0.09;
-    this.slowmo = Math.max(this.slowmo, 0.4);
-    this.whiteFlash = Math.max(this.whiteFlash, 0.35);
+    this.shake = Math.max(this.shake, 8);
+    this.hitstop = 0.08;
+    this.slowmo = Math.max(this.slowmo, 0.38);
+    this.whiteFlash = Math.max(this.whiteFlash, 0.4);
     this.addKill(pts, e.x, e.y, label);
-    this.focus = Math.min(1, this.focus + 0.12);
+    this.focus = Math.min(1, this.focus + 0.14);
     this.checkCleared();
   }
 
@@ -1115,6 +1226,10 @@ export class Game {
       this.hostage.react = 0;
       this.hostage = null;
     }
+    if (this.ridingBike) {
+      this.ridingBike.mounted = false;
+      this.ridingBike = null;
+    }
     p.alive = false;
     p.exec = null;
     this.spawnShards(p.x, p.y, dx, dy, true);
@@ -1232,6 +1347,7 @@ export class Game {
     // player moves in (mostly) real time — bullet-time feel
     const pdt = this.superTime || this.focusActive ? rdt : Math.max(dt, rdt * 0.6);
     if (p.alive && this.state !== 'complete') this.updatePlayer(pdt);
+    this.updateBikes(dt, pdt);
     this.updateHostage(dt);
     this.updateDoors(dt);
     this.updateEnemies(dt);
@@ -1320,20 +1436,51 @@ export class Game {
       p.moveSpeed = sp;
       this.moveAmt = 1;
       this.collide(p, p.r);
-      p.ghostT -= dt;
-      if (p.ghostT <= 0) {
-        p.ghostT = 0.075;
-        const a = Math.atan2(-p.dashY, -p.dashX) + rand(-0.4, 0.4);
-        this.particles.push({ x: p.x - p.dashX * 10, y: p.y - p.dashY * 10, vx: Math.cos(a) * rand(15, 55), vy: Math.sin(a) * rand(15, 55), life: 0.22, max: 0.22, color: '110,110,120', size: rand(3, 5), kind: 'smoke' });
-      }
-      // shoulder charge
-      for (const e of this.enemies) {
-        if (e.state === 'down' || e.state === 'hostage') continue;
-        if (Math.hypot(e.x - p.x, e.y - p.y) < p.r + e.r + 2) {
-          this.knockdown(e, p.dashX, p.dashY, 150, 460, 'SHOULDER BASH');
-          this.impact(e.x, e.y, Math.atan2(p.dashY, p.dashX), 1);
-          this.hitstop = 0.05;
-          p.dashT = Math.min(p.dashT, 0.02);
+      if (p.weapon === 'katana') {
+        if (p.ghostT <= 0) {
+          p.ghostT = 0.055;
+          this.ghosts.push({ x: p.x, y: p.y, angle: p.angle, life: 0.22 });
+          for (let k = 0; k < 2; k++) {
+            this.particles.push({
+              x: p.x + rand(-6, 6), y: p.y + rand(-6, 6),
+              vx: -p.dashX * rand(40, 110) + rand(-25, 25), vy: -p.dashY * rand(40, 110) + rand(-25, 25),
+              life: 0.35, max: 0.35, color: k % 2 === 0 ? '#ff758c' : '#ffffff', size: rand(2, 3.2), kind: 'spark'
+            });
+          }
+        }
+        // Katana Shunpo Iai-Cut: cleanly slices enemies in the flash step path!
+        for (const e of this.enemies) {
+          if (e.state === 'down' || e.state === 'hostage') continue;
+          if (Math.hypot(e.x - p.x, e.y - p.y) < p.r + e.r + 14) {
+            if (e.boss) {
+              e.hp -= 2.5;
+              const toE = Math.atan2(e.y - p.y, e.x - p.x);
+              this.woundEnemy(e, Math.cos(toE), Math.sin(toE), true);
+              this.shake = Math.max(this.shake, 12);
+              this.hitstop = 0.08;
+              sfx.katanaSlash(true);
+              this.texts.push({ x: e.x, y: e.y - 24, text: `BOSS -2.5 HP [${Math.ceil(e.hp)}/11]`, life: 0.85, color: '#e0141e', size: 11 });
+            } else {
+              const cutAng = Math.atan2(p.dashY, p.dashX) + Math.PI / 2;
+              this.sliceEnemy(e, cutAng, 850, '⚡ SHUNPO IAI ⚡');
+            }
+          }
+        }
+      } else {
+        if (p.ghostT <= 0) {
+          p.ghostT = 0.075;
+          const a = Math.atan2(-p.dashY, -p.dashX) + rand(-0.4, 0.4);
+          this.particles.push({ x: p.x - p.dashX * 10, y: p.y - p.dashY * 10, vx: Math.cos(a) * rand(15, 55), vy: Math.sin(a) * rand(15, 55), life: 0.22, max: 0.22, color: '110,110,120', size: rand(3, 5), kind: 'smoke' });
+        }
+        // shoulder charge
+        for (const e of this.enemies) {
+          if (e.state === 'down' || e.state === 'hostage') continue;
+          if (Math.hypot(e.x - p.x, e.y - p.y) < p.r + e.r + 2) {
+            this.knockdown(e, p.dashX, p.dashY, 150, 460, 'SHOULDER BASH');
+            this.impact(e.x, e.y, Math.atan2(p.dashY, p.dashX), 1);
+            this.hitstop = 0.05;
+            p.dashT = Math.min(p.dashT, 0.02);
+          }
         }
       }
     }
@@ -1348,7 +1495,6 @@ export class Game {
       this.collide(p, p.r);
     }
 
-    // movement
     let mx = 0, my = 0;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) my -= 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) my += 1;
@@ -1360,39 +1506,81 @@ export class Game {
       my += this.touch.moveX * s + this.touch.moveY * c;
     }
     const ml = Math.hypot(mx, my);
-    const speed = 215 * Math.min(1, ml);
-    if (p.dashT <= 0) {
-      const tvx = ml ? (mx / ml) * speed : 0;
-      const tvy = ml ? (my / ml) * speed : 0;
-      const response = 1 - Math.exp(-(ml ? 14 : 10) * dt);
-      p.vx += (tvx - p.vx) * response;
-      p.vy += (tvy - p.vy) * response;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.moveSpeed = Math.hypot(p.vx, p.vy);
+
+    // Movement: Ninja bike overrides on-foot walking
+    if (this.ridingBike) {
+      const b = this.ridingBike;
+      p.x = b.x;
+      p.y = b.y;
+      p.angle = b.angle;
+      p.vx = b.vx;
+      p.vy = b.vy;
+      p.moveSpeed = Math.abs(b.speed);
       if (p.moveSpeed > 8) {
         p.walkT += p.moveSpeed * dt;
         this.moveAmt = 1;
       }
-    }
-    this.collide(p, p.r);
-    for (const e of this.enemies) {
-      if (e.state === 'down' || e === this.hostage) continue;
-      const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy);
-      if (d < p.r + e.r - 2 && d > 0.01) {
-        const push = (p.r + e.r - 2 - d) / 2;
-        p.x += (dx / d) * push; p.y += (dy / d) * push;
-        e.x -= (dx / d) * push; e.y -= (dy / d) * push;
+      // Decrement buffers
+      this.dashBuffer = Math.max(0, this.dashBuffer - dt);
+      this.attackBuffer = Math.max(0, this.attackBuffer - dt);
+      this.weaponBuffer = Math.max(0, this.weaponBuffer - dt);
+      this.kickBuffer = Math.max(0, this.kickBuffer - dt);
+
+      // Any bail-out / ghost-ride input releases the bike!
+      if (this.spacePressed || this.dashBuffer > 0 || this.kickBuffer > 0 || this.weaponBuffer > 0 || this.mouse.right) {
+        this.dashBuffer = 0;
+        this.kickBuffer = 0;
+        this.weaponBuffer = 0;
+        this.spacePressed = false;
+        this.mouse.right = false;
+        this.dismountBike(true);
       }
+      return;
+    } else {
+      const speed = 215 * Math.min(1, ml);
+      if (p.dashT <= 0) {
+        const tvx = ml ? (mx / ml) * speed : 0;
+        const tvy = ml ? (my / ml) * speed : 0;
+        const response = 1 - Math.exp(-(ml ? 14 : 10) * dt);
+        p.vx += (tvx - p.vx) * response;
+        p.vy += (tvy - p.vy) * response;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.moveSpeed = Math.hypot(p.vx, p.vy);
+        if (p.moveSpeed > 8) {
+          p.walkT += p.moveSpeed * dt;
+          this.moveAmt = 1;
+        }
+      }
+      this.collide(p, p.r);
+      for (const e of this.enemies) {
+        if (e.state === 'down' || e === this.hostage) continue;
+        const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy);
+        if (d < p.r + e.r - 2 && d > 0.01) {
+          const push = (p.r + e.r - 2 - d) / 2;
+          p.x += (dx / d) * push; p.y += (dy / d) * push;
+          e.x -= (dx / d) * push; e.y -= (dy / d) * push;
+        }
+      }
+      this.collide(p, p.r);
+      if (p.lungeT <= 0) p.angle = this.touch.enabled && this.aimSource === 'touch' ? this.touch.angle : Math.atan2(mw.y - p.y, mw.x - p.x);
     }
-    this.collide(p, p.r);
-    if (p.lungeT <= 0) p.angle = this.touch.enabled && this.aimSource === 'touch' ? this.touch.angle : Math.atan2(mw.y - p.y, mw.x - p.x);
 
     // Decrement all combat action input buffers
     this.dashBuffer = Math.max(0, this.dashBuffer - dt);
     this.attackBuffer = Math.max(0, this.attackBuffer - dt);
     this.weaponBuffer = Math.max(0, this.weaponBuffer - dt);
     this.kickBuffer = Math.max(0, this.kickBuffer - dt);
+
+    // Check mount bike when pressing E or F or kickBuffer
+    if (this.kickBuffer > 0) {
+      const nearBike = this.bikes.find((b) => !b.mounted && Math.hypot(b.x - p.x, b.y - p.y) < 45);
+      if (nearBike) {
+        this.kickBuffer = 0;
+        this.mountBike(nearBike);
+        return;
+      }
+    }
 
     // ---------- SPACE / ACTION / SPRINT / HOSTAGE (Buffered) ----------
     const dashWanted = this.spacePressed || this.dashBuffer > 0;
@@ -1419,7 +1607,7 @@ export class Game {
         p.exec = { e: nearby, t: 0, hits: 0 };
         p.dashT = 0;
         return;
-      } else if (nearby) {
+      } else if (nearby && p.weapon !== 'katana') {
         this.dashBuffer = 0;
         this.spacePressed = false;
         this.grabHostage(nearby);
@@ -1431,14 +1619,31 @@ export class Game {
         if (!ml) { dx = Math.cos(p.angle); dy = Math.sin(p.angle); }
         const l = Math.hypot(dx, dy);
         p.dashX = dx / l; p.dashY = dy / l;
-        p.dashT = 0.34;
-        p.dashCd = 0.50; // snappier dash cooldown
-        p.ghostT = 0;
-        sfx.dash();
-        this.shake = Math.max(this.shake, 2.5);
-        for (let i = 0; i < 5; i++) {
-          const a = Math.atan2(-p.dashY, -p.dashX) + rand(-0.6, 0.6);
-          this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * rand(20, 85), vy: Math.sin(a) * rand(20, 85), life: 0.24, max: 0.24, color: '145,145,155', size: rand(2, 4), kind: 'smoke' });
+        if (p.weapon === 'katana') {
+          p.dashT = 0.32;
+          p.dashCd = 0.40;
+          p.ghostT = 0;
+          sfx.katanaDash();
+          this.shake = Math.max(this.shake, 3.5);
+          this.ghosts.push({ x: p.x, y: p.y, angle: p.angle, life: 0.25 });
+          for (let i = 0; i < 7; i++) {
+            const a = Math.atan2(-p.dashY, -p.dashX) + rand(-0.7, 0.7);
+            this.particles.push({
+              x: p.x, y: p.y,
+              vx: Math.cos(a) * rand(40, 140), vy: Math.sin(a) * rand(40, 140),
+              life: 0.3, max: 0.3, color: i % 2 === 0 ? '#ff758c' : '#ffffff', size: rand(2, 3.5), kind: 'spark'
+            });
+          }
+        } else {
+          p.dashT = 0.34;
+          p.dashCd = 0.50; // snappier dash cooldown
+          p.ghostT = 0;
+          sfx.dash();
+          this.shake = Math.max(this.shake, 2.5);
+          for (let i = 0; i < 5; i++) {
+            const a = Math.atan2(-p.dashY, -p.dashX) + rand(-0.6, 0.6);
+            this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * rand(20, 85), vy: Math.sin(a) * rand(20, 85), life: 0.24, max: 0.24, color: '145,145,155', size: rand(2, 4), kind: 'smoke' });
+          }
         }
       }
     }
@@ -1740,7 +1945,8 @@ export class Game {
     this.pickups.splice(this.pickups.indexOf(pk), 1);
     p.weapon = pk.type;
     p.ammo = pk.ammo;
-    sfx.pickup();
+    if (pk.type === 'katana') sfx.katanaDraw();
+    else sfx.pickup();
     const d = WEAPONS[pk.type];
     this.texts.push({ x: p.x, y: p.y - 18, text: d.melee ? d.name : `${d.name} [${pk.ammo}]`, life: 0.9, color: '#111', size: 10 });
   }
@@ -1752,15 +1958,16 @@ export class Game {
     const d = WEAPONS[w];
     const blade = !!d.blade;
     const isNunchaku = w === 'nunchaku';
+    const isKatana = w === 'katana';
     const step = p.meleeWin > 0 ? p.meleeStep : 0;
     const maxSteps = isNunchaku ? 3 : 2;
     const fin = step === maxSteps;
     p.meleeStep = fin ? 0 : step + 1;
-    p.meleeWin = isNunchaku ? 0.75 : 0.6;
+    p.meleeWin = isNunchaku ? 0.75 : isKatana ? 0.72 : 0.6;
     const spin = fin && (w === 'katana' || isNunchaku);
     const heavy = w === 'bat' || w === 'pipe' || (isNunchaku && fin);
     let range = d.range!, arc = d.arc!;
-    if (fin) { range += isNunchaku ? 16 : 12; arc = spin ? Math.PI * 2 : arc + 0.7; }
+    if (fin) { range += isNunchaku ? 16 : 14; arc = spin ? Math.PI * 2 : arc + 0.7; }
     const dur = w === 'knife' ? 0.11 : isNunchaku ? (fin ? 0.28 : 0.12) : fin ? (spin ? 0.34 : 0.28) : heavy ? 0.19 : 0.15;
     p.cd = isNunchaku ? (fin ? d.cooldown * 1.1 : d.cooldown * 0.65) : fin ? d.cooldown * 1.3 : d.cooldown * 0.72;
     let from: number, to: number;
@@ -1772,16 +1979,50 @@ export class Game {
     const dir = Math.sign(to - from);
     p.swing = { from, to, t: 0, dur, kind: isNunchaku ? 'blunt' : (blade ? 'blade' : 'blunt'), spin };
     p.attackAnim = dur;
-    if (isNunchaku) sfx.nunchakuSpin(fin);
-    else sfx.swing(fin);
+    if (isKatana) {
+      const fwdX = Math.cos(p.angle), fwdY = Math.sin(p.angle);
+      p.vx += fwdX * (fin ? 340 : 220);
+      p.vy += fwdY * (fin ? 340 : 220);
+      this.ghosts.push({ x: p.x, y: p.y, angle: p.angle, life: 0.25 });
+      this.ghosts.push({ x: p.x - fwdX * 14, y: p.y - fwdY * 14, angle: p.angle, life: 0.18 });
+      if (fin) this.ghosts.push({ x: p.x - fwdX * 28, y: p.y - fwdY * 28, angle: p.angle, life: 0.12 });
+      for (let k = 0; k < (fin ? 8 : 4); k++) {
+        const a = p.angle + rand(-1.2, 1.2);
+        this.particles.push({
+          x: p.x + fwdX * 16, y: p.y + fwdY * 16,
+          vx: Math.cos(a) * rand(60, 200), vy: Math.sin(a) * rand(60, 200),
+          life: 0.35, max: 0.35,
+          color: k % 2 === 0 ? '#ff758c' : '#ffffff',
+          size: rand(1.8, 3.2), kind: 'spark'
+        });
+      }
+      sfx.katanaSlash(fin);
+    } else if (isNunchaku) {
+      sfx.nunchakuSpin(fin);
+    } else {
+      sfx.swing(fin);
+    }
     const target = this.meleeTarget(range + 22, Math.min(arc, 2.8), w === 'bat');
-    if (target) this.lungeTo(target, 24);
+    if (target) this.lungeTo(target, isKatana ? 34 : 24);
     const gx = p.x + Math.cos(p.angle) * 26, gy = p.y + Math.sin(p.angle) * 26;
     if (this.tile(Math.floor(gx / T), Math.floor(gy / T)) === 'G') this.breakGlass(Math.floor(gx / T), Math.floor(gy / T), Math.cos(p.angle), Math.sin(p.angle));
     if (spin) {
-      const ringCol = isNunchaku ? 'rgba(245,185,50,0.5)' : 'rgba(198,83,91,0.38)';
-      this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.35, max: 0.35, color: ringCol, size: range + 22, kind: 'ring' });
-      this.shake = Math.max(this.shake, isNunchaku ? 8 : 6);
+      const ringCol = isNunchaku ? 'rgba(245,185,50,0.5)' : 'rgba(235,28,45,0.55)';
+      this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.38, max: 0.38, color: ringCol, size: range + 26, kind: 'ring' });
+      if (isKatana) {
+        this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.24, max: 0.24, color: '#ffffff', size: range + 12, kind: 'ring' });
+        for (let k = 0; k < 12; k++) {
+          const a = rand(0, Math.PI * 2);
+          this.particles.push({
+            x: p.x, y: p.y,
+            vx: Math.cos(a) * rand(80, 260), vy: Math.sin(a) * rand(80, 260),
+            life: 0.35, max: 0.35,
+            color: k % 3 === 0 ? '#ffffff' : k % 3 === 1 ? '#ff2a3e' : '#ff758c',
+            size: rand(1.5, 3), kind: 'spark'
+          });
+        }
+      }
+      this.shake = Math.max(this.shake, isNunchaku ? 8 : 10);
     }
     // gather victims
     const victims: Enemy[] = [];
@@ -1834,7 +2075,12 @@ export class Game {
           this.hitstop = 0.04;
         }
       } else if (w === 'katana') {
-        const label = spin ? (victims.length > 1 ? `SPIN SLICE x${victims.length}` : 'SPIN SLICE') : i > 0 ? 'DOUBLE SLICE' : ['SLICED', 'CROSS CUT'][step] || 'SLICED';
+        const samuraiLabels = ['⚔️ KESA-GIRI ⚔️', '⚔️ GYAKU-KESA ⚔️', '⚡ SENPUU CYCLONE ⚡'];
+        const label = spin
+          ? (victims.length > 1 ? `⚡ SENPUU MASSACRE x${victims.length} ⚡` : '⚡ SENPUU CYCLONE ⚡')
+          : i > 0
+          ? `⚡ MULTI-SLICE x${i + 1} ⚡`
+          : samuraiLabels[step] || '⚔️ IAI SLICE ⚔️';
         this.sliceEnemy(e, toE + (Math.PI / 2) * dir, 700 + step * 150, label);
       } else if (w === 'bat') {
         e.batHits++;
@@ -1880,7 +2126,7 @@ export class Game {
         ent.y += ny * pen * 0.6;
         return true;
       };
-      if (p.alive && !p.exec) { interact(p, 'player'); this.collide(p, p.r); }
+      if (p.alive && !p.exec && !this.ridingBike) { interact(p, 'player'); this.collide(p, p.r); }
       for (const e of this.enemies) {
         if (e.state === 'down' || e.state === 'hostage') continue;
         const e2 = ex();
@@ -2506,39 +2752,63 @@ export class Game {
             continue outer;
           }
         }
-        // Nunchaku bullet deflection!
-        if (b.owner !== 0 && p.alive && p.weapon === 'nunchaku' && (p.attackAnim > 0 || (p.swing && p.swing.t < p.swing.dur))) {
+        // Nunchaku & Katana bullet deflection! (Samurai Zantetsuken / Deflect)
+        const isDeflectW = p.weapon === 'nunchaku' || p.weapon === 'katana';
+        const isKatanaDash = p.weapon === 'katana' && p.dashT > 0;
+        if (b.owner !== 0 && p.alive && isDeflectW && (p.attackAnim > 0 || (p.swing && p.swing.t < p.swing.dur) || isKatanaDash)) {
           const dToP = Math.hypot(p.x - b.x, p.y - b.y);
-          if (dToP < 56) {
+          const reach = p.weapon === 'katana' ? 66 : 56;
+          if (dToP < reach) {
             const toB = Math.atan2(b.y - p.y, b.x - p.x);
-            const inArc = p.swing?.spin || Math.abs(angDiff(p.angle, toB)) < 1.75;
+            const inArc = isKatanaDash || p.swing?.spin || Math.abs(angDiff(p.angle, toB)) < (p.weapon === 'katana' ? 2.0 : 1.75);
             if (inArc) {
               b.owner = 0; // deflected: now player's bullet!
               const aim = p.angle;
-              const sp = Math.max(700, Math.hypot(b.vx, b.vy)) * 1.25;
+              const sp = Math.max(750, Math.hypot(b.vx, b.vy)) * 1.35;
               b.vx = Math.cos(aim) * sp;
               b.vy = Math.sin(aim) * sp;
               b.sx = p.x;
               b.sy = p.y;
               b.life = 1.0;
-              b.dmg = 2.5;
+              b.dmg = p.weapon === 'katana' ? 3.0 : 2.5;
               b.dodged = true;
-              sfx.nunchakuDeflect();
-              this.shake = Math.max(this.shake, 7);
-              this.hitstop = 0.05;
-              this.slowmo = Math.max(this.slowmo, 0.25);
-              this.texts.push({ x: b.x, y: b.y - 18, text: '★ DEFLECT! ★', life: 0.85, color: '#d4af37', size: 12 });
-              this.score += 250;
-              for (let k = 0; k < 7; k++) {
-                const a = aim + rand(-1.2, 1.2);
-                this.particles.push({
-                  x: b.x, y: b.y,
-                  vx: Math.cos(a) * rand(120, 360),
-                  vy: Math.sin(a) * rand(120, 360),
-                  life: 0.22, max: 0.22,
-                  color: k % 2 === 0 ? '#ffd700' : '#ffffff',
-                  size: 2.2, kind: 'spark'
-                });
+              if (p.weapon === 'katana') {
+                b.pierce = true;
+                sfx.katanaParry();
+                this.shake = Math.max(this.shake, 9);
+                this.hitstop = 0.05;
+                this.slowmo = Math.max(this.slowmo, 0.28);
+                this.texts.push({ x: b.x, y: b.y - 20, text: '⚔️ ZANTETSUKEN! ⚔️', life: 0.9, color: '#e0141e', size: 12 });
+                this.score += 300;
+                for (let k = 0; k < 10; k++) {
+                  const a = aim + rand(-1.2, 1.2);
+                  this.particles.push({
+                    x: b.x, y: b.y,
+                    vx: Math.cos(a) * rand(140, 380), vy: Math.sin(a) * rand(140, 380),
+                    life: 0.25, max: 0.25,
+                    color: k % 3 === 0 ? '#ffffff' : k % 3 === 1 ? '#ffcc00' : '#ff3344',
+                    size: rand(1.6, 3), kind: 'spark'
+                  });
+                }
+                this.particles.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 0.18, max: 0.18, color: '#ffffff', size: 38, kind: 'star', angle: aim });
+              } else {
+                sfx.nunchakuDeflect();
+                this.shake = Math.max(this.shake, 7);
+                this.hitstop = 0.05;
+                this.slowmo = Math.max(this.slowmo, 0.25);
+                this.texts.push({ x: b.x, y: b.y - 18, text: '★ DEFLECT! ★', life: 0.85, color: '#d4af37', size: 12 });
+                this.score += 250;
+                for (let k = 0; k < 7; k++) {
+                  const a = aim + rand(-1.2, 1.2);
+                  this.particles.push({
+                    x: b.x, y: b.y,
+                    vx: Math.cos(a) * rand(120, 360),
+                    vy: Math.sin(a) * rand(120, 360),
+                    life: 0.22, max: 0.22,
+                    color: k % 2 === 0 ? '#ffd700' : '#ffffff',
+                    size: 2.2, kind: 'spark'
+                  });
+                }
               }
               continue outer;
             }
@@ -2718,6 +2988,732 @@ export class Game {
     this.cam.rot = Math.sin(this.time * 0.33) * 0.035 + Math.sin(this.time * 0.81) * 0.012;
   }
 
+  // ---------------- Ninja Motorcycle System ----------------
+  spawnBike(x: number, y: number, angle: number): Bike {
+    const bike: Bike = {
+      id: this.nextId++,
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      angle,
+      speed: 0,
+      steerAngle: 0,
+      lean: 0,
+      mounted: false,
+      headlight: true,
+      ghostRiding: false,
+      skidT: 0,
+      exhaustT: 0,
+      engineSoundT: 0,
+      hitEnemies: new Set(),
+      crashed: false,
+    };
+    if (!this.bikes) this.bikes = [];
+    this.bikes.push(bike);
+    return bike;
+  }
+
+  mountBike(bike: Bike) {
+    if (this.hostage) this.throwHostage();
+    bike.mounted = true;
+    bike.ghostRiding = false;
+    bike.crashed = false;
+    this.ridingBike = bike;
+    this.player.x = bike.x;
+    this.player.y = bike.y;
+    this.player.angle = bike.angle;
+    sfx.bikeRev(1.1);
+    this.texts.push({ x: bike.x, y: bike.y - 28, text: '★ NINJA MOUNTED! [W/S] GAS • [SPACE] GHOST-RIDE ★', life: 1.5, color: '#20d040', size: 12 });
+    this.emitUI(true);
+  }
+
+  dismountBike(ghostRide = true) {
+    const bike = this.ridingBike;
+    if (!bike) return;
+    bike.mounted = false;
+    this.ridingBike = null;
+
+    const p = this.player;
+    const side = Math.sin(this.time * 12) >= 0 ? 1 : -1;
+    const perpX = -Math.sin(bike.angle) * side;
+    const perpY = Math.cos(bike.angle) * side;
+    const fwdX = Math.cos(bike.angle);
+    const fwdY = Math.sin(bike.angle);
+
+    p.x = bike.x + perpX * 18;
+    p.y = bike.y + perpY * 18;
+    this.collide(p, p.r);
+
+    if (ghostRide && Math.abs(bike.speed) > 60) {
+      bike.ghostRiding = true;
+      bike.hitEnemies.clear();
+      const launchSpeed = Math.max(Math.abs(bike.speed), 400);
+      bike.speed = launchSpeed;
+      bike.vx = fwdX * launchSpeed;
+      bike.vy = fwdY * launchSpeed;
+
+      // Player executes a tactical acrobatic roll to safety
+      p.dashT = 0.32;
+      p.dashX = fwdX * 0.25 + perpX * 0.85;
+      p.dashY = fwdY * 0.25 + perpY * 0.85;
+      p.vx = p.dashX * 260;
+      p.vy = p.dashY * 260;
+
+      sfx.dash();
+      sfx.bikeRev(1.8);
+      sfx.bikeSkid();
+      this.shake = Math.max(this.shake, 8);
+      this.texts.push({ x: bike.x, y: bike.y - 24, text: '⚡ GHOST-RIDE BABLAS! ⚡', life: 1.4, color: '#20d040', size: 14 });
+    } else {
+      bike.ghostRiding = false;
+      p.vx = 0;
+      p.vy = 0;
+    }
+    this.emitUI(true);
+  }
+
+  updateBikes(dt: number, pdt: number) {
+    for (let i = this.bikes.length - 1; i >= 0; i--) {
+      const bike = this.bikes[i];
+      const p = this.player;
+
+      if (bike.mounted) {
+        let throttle = 0;
+        if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) throttle += 1;
+        if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) throttle -= 1;
+        if (this.touch.enabled && this.touch.moveY !== 0) throttle -= this.touch.moveY;
+
+        let steer = 0;
+        if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) steer -= 1;
+        if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) steer += 1;
+        if (this.touch.enabled && this.touch.moveX !== 0) steer += this.touch.moveX;
+
+        // Comfortable, sporty, highly controllable dynamics (no aggressive mouse steering)
+        const maxSpeed = 300;
+        const accel = 380;
+        const brakeForce = 650;
+        const friction = throttle === 0 ? 3.4 : 1.2;
+
+        if (throttle > 0) {
+          if (bike.speed < -10) {
+            bike.speed += brakeForce * pdt;
+          } else {
+            bike.speed = Math.min(maxSpeed, bike.speed + accel * throttle * pdt);
+          }
+        } else if (throttle < 0) {
+          if (bike.speed > 10) {
+            // S brakes smoothly and progressively
+            bike.speed = Math.max(0, bike.speed - brakeForce * pdt);
+          } else {
+            // Reverse smoothly
+            bike.speed = Math.max(-110, bike.speed - accel * 0.7 * pdt);
+          }
+        } else {
+          // Coast down with natural engine braking
+          bike.speed *= Math.exp(-friction * pdt);
+        }
+
+        // Steer rate: comfortable, stable, easy to navigate tight rooms
+        const turnRate = 2.7 * (bike.speed >= 0 ? 1 : -1);
+        bike.angle += steer * turnRate * pdt;
+        bike.steerAngle = steer * 0.28;
+        bike.lean = steer * Math.min(1, Math.abs(bike.speed) / 180) * 0.32;
+
+        const fwdX = Math.cos(bike.angle), fwdY = Math.sin(bike.angle);
+        const targetVx = fwdX * bike.speed;
+        const targetVy = fwdY * bike.speed;
+        const resp = 1 - Math.exp(-12 * pdt);
+        bike.vx += (targetVx - bike.vx) * resp;
+        bike.vy += (targetVy - bike.vy) * resp;
+
+        bike.engineSoundT -= pdt;
+        if (bike.engineSoundT <= 0 && Math.abs(bike.speed) > 30) {
+          const pitch = 0.85 + Math.min(1.2, Math.abs(bike.speed) / 220);
+          sfx.bikeRev(pitch);
+          bike.engineSoundT = 0.16;
+        }
+
+        if (Math.abs(steer) > 0.4 && Math.abs(bike.speed) > 160) {
+          bike.skidT -= pdt;
+          if (bike.skidT <= 0) {
+            bike.skidT = 0.06;
+            sfx.bikeSkid();
+            const rearX = bike.x - fwdX * 14;
+            const rearY = bike.y - fwdY * 14;
+            this.decalX.fillStyle = 'rgba(25, 25, 30, 0.4)';
+            this.decalX.beginPath();
+            this.decalX.ellipse(rearX, rearY, 3.0, 1.4, bike.angle, 0, Math.PI * 2);
+            this.decalX.fill();
+            this.particles.push({
+              x: rearX, y: rearY, vx: rand(-12, 12), vy: rand(-12, 12),
+              life: 0.28, max: 0.28, color: '180,180,185', size: rand(3, 6), kind: 'smoke'
+            });
+          }
+        }
+
+        p.x = bike.x;
+        p.y = bike.y;
+        p.angle = bike.angle;
+        p.vx = bike.vx;
+        p.vy = bike.vy;
+        p.moveSpeed = Math.abs(bike.speed);
+        this.moveAmt = Math.min(1, Math.abs(bike.speed) / 100);
+
+      } else if (bike.ghostRiding) {
+        bike.vx *= Math.exp(-0.25 * dt);
+        bike.vy *= Math.exp(-0.25 * dt);
+        bike.speed = Math.hypot(bike.vx, bike.vy);
+        if (bike.speed < 45) {
+          bike.ghostRiding = false;
+        }
+
+        bike.exhaustT -= dt;
+        if (bike.exhaustT <= 0 && bike.speed > 80) {
+          bike.exhaustT = 0.05;
+          const exX = bike.x - Math.cos(bike.angle) * 15 + Math.sin(bike.angle) * 5;
+          const exY = bike.y - Math.sin(bike.angle) * 15 - Math.cos(bike.angle) * 5;
+          this.particles.push({
+            x: exX, y: exY,
+            vx: -Math.cos(bike.angle) * 35, vy: -Math.sin(bike.angle) * 35,
+            life: 0.35, max: 0.35, color: '120,120,125', size: rand(6, 10), kind: 'smoke'
+          });
+        }
+      } else {
+        bike.vx *= Math.exp(-6 * dt);
+        bike.vy *= Math.exp(-6 * dt);
+        bike.speed = Math.hypot(bike.vx, bike.vy);
+      }
+
+      const stepDt = (bike.mounted || bike.ghostRiding) ? pdt : dt;
+
+      const nx = bike.x + bike.vx * stepDt;
+      const ny = bike.y + bike.vy * stepDt;
+      const checkR = 7.5; // Slim radius for smooth fit through 24px doorways
+
+      // 1. DOOR BREACH & COLLISION: Smashes closed doors instantly and cleanly, never causing lag or snags
+      for (const d of this.doors) {
+        const doorCenterX = Math.floor(d.hx / T) * T + T / 2;
+        const doorCenterY = Math.floor(d.hy / T) * T + T / 2;
+        const ex = d.hx + Math.cos(d.angle) * T, ey = d.hy + Math.sin(d.angle) * T;
+        const sdNext = segDist(nx, ny, d.hx, d.hy, ex, ey);
+        const sdNow = segDist(bike.x, bike.y, d.hx, d.hy, ex, ey);
+
+        if (sdNext.d < 26 || sdNow.d < 26 || Math.hypot(nx - doorCenterX, ny - doorCenterY) < 28) {
+          const isClosed = Math.abs(angDiff(d.closed, d.angle)) < 0.45;
+          const perpX = -Math.sin(d.closed), perpY = Math.cos(d.closed);
+          const fwdX = Math.cos(bike.angle), fwdY = Math.sin(bike.angle);
+          const dot = fwdX * perpX + fwdY * perpY;
+          const sign = dot >= 0 ? 1 : -1;
+
+          if (isClosed) {
+            // Immediately swing door flat open against the wall
+            d.angle = d.closed + sign * 1.57;
+            d.av = sign * 25;
+            d.pushT = 0;
+            d.pusher = 'player';
+
+            // Slam any enemy behind the door
+            for (const e of this.enemies) {
+              if (e.state === 'down' || e.state === 'hostage') continue;
+              if (Math.hypot(e.x - doorCenterX, e.y - doorCenterY) < 42) {
+                this.knockdown(e, fwdX, fwdY, 260);
+                this.texts.push({ x: e.x, y: e.y - 24, text: '💥 DOOR SLAM! 💥', life: 1, color: '#20d040', size: 12 });
+              }
+            }
+
+            if (!d.bikeHitT || this.time - d.bikeHitT > 0.5) {
+              d.bikeHitT = this.time;
+              sfx.door();
+              this.shake = Math.max(this.shake, 6);
+              // Wood dust puffs only — NO crystal sparks!
+              for (let k = 0; k < 5; k++) {
+                this.particles.push({
+                  x: doorCenterX, y: doorCenterY,
+                  vx: fwdX * rand(40, 100) + rand(-20, 20),
+                  vy: fwdY * rand(40, 100) + rand(-20, 20),
+                  life: 0.35, max: 0.35, color: '#a07840', size: rand(3, 5), kind: 'smoke'
+                });
+              }
+              this.texts.push({ x: doorCenterX, y: doorCenterY - 18, text: '💥 DOOR SMASH! 💥', life: 0.9, color: '#20d040', size: 12 });
+            }
+          }
+        }
+      }
+
+      // 2. DOORWAY CENTERING: Smoothly guides motorcycle through open doorways without clipping jambs
+      let activeDoorway: Door | null = null;
+      for (const d of this.doors) {
+        const doorCenterX = Math.floor(d.hx / T) * T + T / 2;
+        const doorCenterY = Math.floor(d.hy / T) * T + T / 2;
+        if (Math.hypot(bike.x - doorCenterX, bike.y - doorCenterY) < 28) {
+          activeDoorway = d;
+          if (Math.abs(d.closed - Math.PI / 2) < 0.2) {
+            // Horizontal corridor (walls above & below): align Y
+            bike.y += (doorCenterY - bike.y) * Math.min(1, 14 * stepDt);
+          } else {
+            // Vertical corridor (walls left & right): align X
+            bike.x += (doorCenterX - bike.x) * Math.min(1, 14 * stepDt);
+          }
+          break;
+        }
+      }
+
+      // 3. WALL COLLISION & SLIDING (with zero crystal particles)
+      const signX = Math.sign(bike.vx);
+      const signY = Math.sign(bike.vy);
+
+      let hitWallX = false;
+      let hitWallY = false;
+
+      if (signX !== 0) {
+        const tx = Math.floor((nx + signX * checkR) / T);
+        const ty1 = Math.floor((bike.y - checkR * 0.6) / T);
+        const ty2 = Math.floor((bike.y + checkR * 0.6) / T);
+        if (this.solidMove(tx, ty1) || this.solidMove(tx, ty2)) {
+          hitWallX = true;
+        }
+      }
+
+      if (signY !== 0) {
+        const ty = Math.floor((ny + signY * checkR) / T);
+        const tx1 = Math.floor((bike.x - checkR * 0.6) / T);
+        const tx2 = Math.floor((bike.x + checkR * 0.6) / T);
+        if (this.solidMove(tx1, ty) || this.solidMove(tx2, ty)) {
+          hitWallY = true;
+        }
+      }
+
+      // If passing through active doorway, ignore perpendicular door jamb walls
+      if (activeDoorway) {
+        if (Math.abs(activeDoorway.closed - Math.PI / 2) < 0.2) {
+          hitWallY = false;
+        } else {
+          hitWallX = false;
+        }
+      }
+
+      // Glass smash ("G")
+      const txFront = Math.floor((nx + Math.sign(bike.vx || 1) * checkR) / T);
+      const tyFront = Math.floor((ny + Math.sign(bike.vy || 1) * checkR) / T);
+      const tX = this.tile(txFront, Math.floor(bike.y / T));
+      const tY = this.tile(Math.floor(bike.x / T), tyFront);
+      if (tX === 'G') {
+        this.breakGlass(txFront, Math.floor(bike.y / T), Math.sign(bike.vx), 0);
+        this.texts.push({ x: bike.x, y: bike.y - 20, text: '💥 SHATTER GLASS! 💥', life: 0.9, color: '#40d0ff', size: 11 });
+      }
+      if (tY === 'G') {
+        this.breakGlass(Math.floor(bike.x / T), tyFront, 0, Math.sign(bike.vy));
+        this.texts.push({ x: bike.x, y: bike.y - 20, text: '💥 SHATTER GLASS! 💥', life: 0.9, color: '#40d0ff', size: 11 });
+      }
+
+      // Furniture smash ("T") — Wood splinters only, no sparks or crystal shards
+      if (tX === 'T' && Math.abs(bike.speed) > 100) {
+        this.tiles[Math.floor(bike.y / T)][txFront] = '.';
+        this.shake = Math.max(this.shake, 6);
+        for (let k = 0; k < 6; k++) {
+          this.particles.push({
+            x: nx, y: bike.y,
+            vx: rand(-40, 40), vy: rand(-40, 40),
+            life: 0.3, max: 0.3, color: '#b88a48', size: rand(3, 5), kind: 'smoke'
+          });
+        }
+        this.bakeStatic();
+      }
+      if (tY === 'T' && Math.abs(bike.speed) > 100) {
+        this.tiles[tyFront][Math.floor(bike.x / T)] = '.';
+        this.shake = Math.max(this.shake, 6);
+        for (let k = 0; k < 6; k++) {
+          this.particles.push({
+            x: bike.x, y: ny,
+            vx: rand(-40, 40), vy: rand(-40, 40),
+            life: 0.3, max: 0.3, color: '#b88a48', size: rand(3, 5), kind: 'smoke'
+          });
+        }
+        this.bakeStatic();
+      }
+
+      // Wall collision handling — ZERO crystal shards, smooth sliding
+      if (bike.ghostRiding && (hitWallX || hitWallY)) {
+        bike.crashed = true;
+        bike.ghostRiding = false;
+        bike.speed = 0;
+        bike.vx = 0;
+        bike.vy = 0;
+        sfx.bikeCrash();
+        this.shake = Math.max(this.shake, 14);
+        // Dark tire smoke only — NO crystal shards or sparks!
+        for (let k = 0; k < 6; k++) {
+          this.particles.push({
+            x: bike.x + rand(-6, 6), y: bike.y + rand(-6, 6),
+            vx: rand(-20, 20), vy: rand(-20, 20),
+            life: 0.5, max: 0.5, color: '70,70,75', size: rand(10, 18), kind: 'smoke'
+          });
+        }
+        this.texts.push({ x: bike.x, y: bike.y - 26, text: '💥 WALL CRASH! 💥', life: 1.2, color: '#e0141e', size: 14 });
+      } else {
+        // Mounted / coasting: Wall Sliding (smooth, comfortable navigation)
+        if (hitWallX) {
+          bike.vx = 0;
+          bike.speed *= 0.82;
+        } else {
+          bike.x = nx;
+        }
+
+        if (hitWallY) {
+          bike.vy = 0;
+          bike.speed *= 0.82;
+        } else {
+          bike.y = ny;
+        }
+
+        // Head-on bump into wall corner: smoothly stop without damage or lag
+        if (hitWallX && hitWallY && Math.abs(bike.speed) > 100) {
+          bike.speed = 0;
+          bike.vx = 0;
+          bike.vy = 0;
+          // Soft tire bump puff — NO crystal sparks or shards!
+          this.particles.push({
+            x: bike.x, y: bike.y,
+            vx: rand(-12, 12), vy: rand(-12, 12),
+            life: 0.25, max: 0.25, color: '110,110,115', size: rand(4, 7), kind: 'smoke'
+          });
+          this.shake = Math.max(this.shake, 4);
+        }
+      }
+
+      if (bike.mounted) {
+        p.x = bike.x;
+        p.y = bike.y;
+      }
+
+      // Enemy collisions ("nabrak org")
+      const ramSpeed = Math.abs(bike.speed);
+      if (ramSpeed > 60) {
+        for (const e of this.enemies) {
+          if (e.state === 'down' || e.state === 'hostage') continue;
+          if (Math.hypot(e.x - bike.x, e.y - bike.y) < 26 + e.r) {
+            if (!bike.hitEnemies.has(e.id)) {
+              bike.hitEnemies.add(e.id);
+              sfx.bikeCrash();
+              sfx.nunchakuHit();
+              this.shake = Math.max(this.shake, 16);
+              this.hitstop = 0.08;
+              this.slowmo = Math.max(this.slowmo, 0.4);
+
+              const hitAng = Math.atan2(e.y - bike.y, e.x - bike.x);
+              const fwdX = Math.cos(bike.angle);
+              const fwdY = Math.sin(bike.angle);
+              const launchVx = fwdX * 0.75 + Math.cos(hitAng) * 0.25;
+              const launchVy = fwdY * 0.75 + Math.sin(hitAng) * 0.25;
+
+              if (e.boss) {
+                e.hp -= 4.5;
+                e.hitFlash = 0.25;
+                this.impact(e.x, e.y, hitAng, 2.0);
+                this.texts.push({ x: e.x, y: e.y - 28, text: '★ NINJA CRUSH! -4.5 HP ★', life: 1.2, color: '#e0141e', size: 14 });
+              } else {
+                const label = bike.ghostRiding ? '💥 GHOST-RIDE ROADKILL! 💥' : '💥 NINJA ROADKILL! 💥';
+                this.knockdown(e, launchVx, launchVy, 420, 1600, label);
+                e.doomed = true;
+                this.impact(e.x, e.y, hitAng, 1.8);
+                this.score += 600;
+              }
+              if (bike.ghostRiding) {
+                bike.speed *= 0.88;
+                bike.vx *= 0.88;
+                bike.vy *= 0.88;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  drawBike(ctx: CanvasRenderingContext2D, bike: Bike) {
+    ctx.save();
+    ctx.translate(bike.x, bike.y);
+    ctx.rotate(bike.angle);
+
+    // 1. Dual Projector Headlight Beam (Always On — "PASTIKAN LAMPU DEPAN NINJA NYALA")
+    if (bike.headlight) {
+      ctx.save();
+      // Raycast beam length to nearest wall
+      let beamLen = 320;
+      const cosA = Math.cos(bike.angle), sinA = Math.sin(bike.angle);
+      for (let dist = 16; dist < 320; dist += 8) {
+        const checkX = bike.x + cosA * dist;
+        const checkY = bike.y + sinA * dist;
+        const t = this.tile(Math.floor(checkX / T), Math.floor(checkY / T));
+        if (t === '#') {
+          beamLen = dist;
+          break;
+        }
+      }
+
+      // Wide ambient floodlight cone
+      const ambientG = ctx.createRadialGradient(16, 0, 4, 16, 0, beamLen);
+      ambientG.addColorStop(0, 'rgba(255, 255, 245, 0.55)');
+      ambientG.addColorStop(0.2, 'rgba(180, 245, 255, 0.35)');
+      ambientG.addColorStop(0.65, 'rgba(120, 220, 255, 0.15)');
+      ambientG.addColorStop(1, 'rgba(120, 220, 255, 0)');
+      ctx.fillStyle = ambientG;
+      ctx.beginPath();
+      ctx.moveTo(16, -2.5);
+      ctx.arc(16, 0, beamLen, -0.30, 0.30);
+      ctx.closePath();
+      ctx.fill();
+
+      // Intense focused high-beam piercing core
+      const coreG = ctx.createRadialGradient(16, 0, 2, 16, 0, beamLen * 0.95);
+      coreG.addColorStop(0, 'rgba(255, 255, 255, 0.90)');
+      coreG.addColorStop(0.25, 'rgba(220, 255, 255, 0.55)');
+      coreG.addColorStop(0.7, 'rgba(140, 235, 255, 0.20)');
+      coreG.addColorStop(1, 'rgba(140, 235, 255, 0)');
+      ctx.fillStyle = coreG;
+      ctx.beginPath();
+      ctx.moveTo(16, -1.5);
+      ctx.arc(16, 0, beamLen * 0.95, -0.14, 0.14);
+      ctx.closePath();
+      ctx.fill();
+
+      // Sharp projector beam cut-off edges
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.50)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(16, -2.5); ctx.lineTo(beamLen * 0.88, -beamLen * 0.22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(16, 2.5); ctx.lineTo(beamLen * 0.88, beamLen * 0.22); ctx.stroke();
+
+      // Wall illumination splash if beam reaches a wall
+      if (beamLen < 310) {
+        ctx.fillStyle = 'rgba(200, 245, 255, 0.40)';
+        ctx.beginPath();
+        ctx.ellipse(beamLen, 0, 6, beamLen * 0.25, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    // Speed / Wind streak lines when speeding or ghost-riding
+    if (bike.ghostRiding || Math.abs(bike.speed) > 200) {
+      ctx.save();
+      const alpha = Math.min(0.65, Math.abs(bike.speed) / 500);
+      ctx.strokeStyle = `rgba(32, 208, 64, ${alpha})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-18, -6); ctx.lineTo(-38 - Math.random() * 20, -6);
+      ctx.moveTo(-18, 6); ctx.lineTo(-38 - Math.random() * 20, 6);
+      ctx.moveTo(-16, -1); ctx.lineTo(-44 - Math.random() * 25, -1);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 2. Ground Shadow
+    ctx.fillStyle = 'rgba(20, 22, 28, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 21, 8.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. Rear Wheel & Swingarm
+    ctx.fillStyle = '#454a52';
+    ctx.fillRect(-15, -4, 14, 2);
+    ctx.fillRect(-15, 2, 14, 2);
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(-16, -3.5, 10, 7);
+
+    const tireG = ctx.createLinearGradient(-15, -3, -15, 3);
+    tireG.addColorStop(0, '#111214');
+    tireG.addColorStop(0.4, '#24272c');
+    tireG.addColorStop(1, '#0e0f10');
+    ctx.fillStyle = tireG;
+    ctx.fillRect(-16, -3, 11, 6);
+    ctx.strokeStyle = '#0a0a0c';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-16, 0); ctx.lineTo(-5, 0);
+    ctx.stroke();
+
+    // Akrapovič Carbon Fiber Exhaust
+    ctx.save();
+    ctx.translate(-8, 5.5);
+    ctx.rotate(0.12);
+    ctx.fillStyle = '#1c1c1f';
+    ctx.fillRect(0, -1.8, 14, 3.6);
+    ctx.fillStyle = '#2c2d33';
+    ctx.fillRect(2, -1.6, 9, 1.2);
+    ctx.fillStyle = '#8f95a0';
+    ctx.fillRect(13, -1.9, 2.2, 3.8);
+    ctx.fillStyle = '#e51d2e';
+    ctx.fillRect(5, -1, 3, 2);
+    ctx.restore();
+
+    // 4. Front Wheel & Brake Assembly
+    ctx.save();
+    ctx.translate(14, 0);
+    ctx.rotate(bike.steerAngle);
+    ctx.fillStyle = tireG;
+    ctx.fillRect(-5, -2.2, 10, 4.4);
+    ctx.fillStyle = '#d4af37';
+    ctx.fillRect(-2, -3.2, 3, 1.2);
+    ctx.fillRect(-2, 2.0, 3, 1.2);
+    ctx.fillStyle = '#22d644';
+    ctx.fillRect(-4, -2.6, 6, 5.2);
+    ctx.restore();
+
+    // 5. Twin-Spar Frame & Inline-4 Engine
+    ctx.fillStyle = '#202328';
+    ctx.beginPath();
+    ctx.moveTo(-8, -5); ctx.lineTo(6, -6); ctx.lineTo(10, -4);
+    ctx.lineTo(10, 4); ctx.lineTo(6, 6); ctx.lineTo(-8, 5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#3a3f47';
+    for (let f = -4; f <= 4; f += 2.5) {
+      ctx.fillRect(f, -3.8, 1.5, 7.6);
+    }
+
+    // 6. Kawasaki Lime Green Fairings & Bodywork
+    const greenG = ctx.createLinearGradient(0, -6, 0, 6);
+    greenG.addColorStop(0, '#42e862');
+    greenG.addColorStop(0.35, '#20d040');
+    greenG.addColorStop(1, '#118a25');
+    ctx.fillStyle = greenG;
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(12, -6.5);
+    ctx.lineTo(2, -7.5);
+    ctx.lineTo(-7, -5.5);
+    ctx.lineTo(-15, -2.5);
+    ctx.lineTo(-15, 2.5);
+    ctx.lineTo(-7, 5.5);
+    ctx.lineTo(2, 7.5);
+    ctx.lineTo(12, 6.5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#14171a';
+    ctx.beginPath();
+    ctx.moveTo(3, -6.2); ctx.lineTo(9, -5.5); ctx.lineTo(5, -2); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(3, 6.2); ctx.lineTo(9, 5.5); ctx.lineTo(5, 2); ctx.closePath(); ctx.fill();
+
+    // Sculpted Fuel Tank
+    const tankG = ctx.createLinearGradient(0, -4.5, 0, 4.5);
+    tankG.addColorStop(0, '#50f570');
+    tankG.addColorStop(0.4, '#20d040');
+    tankG.addColorStop(1, '#128f28');
+    ctx.fillStyle = tankG;
+    ctx.beginPath();
+    ctx.ellipse(-1, 0, 7.5, 4.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#111215';
+    ctx.fillRect(-3, -4.8, 4.5, 1.4);
+    ctx.fillRect(-3, 3.4, 4.5, 1.4);
+    ctx.fillStyle = '#0b0c0e';
+    ctx.beginPath(); ctx.arc(-1, 0, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#8f95a0';
+    ctx.beginPath(); ctx.arc(-1, 0, 0.8, 0, Math.PI * 2); ctx.fill();
+
+    // Smoked Tinted Windscreen
+    ctx.fillStyle = '#0a1015';
+    ctx.beginPath();
+    ctx.moveTo(14, 0);
+    ctx.lineTo(7, -4);
+    ctx.lineTo(4, 0);
+    ctx.lineTo(7, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.fillRect(8, -1.8, 5, 0.9);
+
+    // 7. Dual Projector Headlight Lenses (Nyala)
+    if (bike.headlight) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(15, -2.8, 2.0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(15, 2.8, 2.0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#80f5ff';
+      ctx.beginPath(); ctx.arc(15, -2.8, 1.0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(15, 2.8, 1.0, 0, Math.PI * 2); ctx.fill();
+    }
+
+    ctx.fillStyle = '#ff1c2a';
+    ctx.fillRect(-15.5, -2.2, 1.5, 4.4);
+
+    // 8. Clip-on Handlebars
+    ctx.fillStyle = '#181a1d';
+    ctx.fillRect(7, -9.5, 2.2, 4.5);
+    ctx.fillRect(7, 5.0, 2.2, 4.5);
+    ctx.fillStyle = '#20d040';
+    ctx.fillRect(6.8, -10.2, 2.6, 1.2);
+    ctx.fillRect(6.8, 9.0, 2.6, 1.2);
+    ctx.strokeStyle = '#c5cbd4';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath(); ctx.moveTo(9, -8.5); ctx.lineTo(11, -8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(9, 8.5); ctx.lineTo(11, 8); ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 5px Anton, Impact, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('NINJA', -6, -0.2);
+
+    // 9. Rider in Sportbike Racing Tuck (When Mounted)
+    if (bike.mounted) {
+      const skin = this.skin || 'superhot';
+      const isStick = skin === 'stickman';
+      const isNeon = skin === 'neon_shapes';
+      const isCyber = skin === 'cyber_bot';
+
+      const suitC = isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#2c323d' : '#22252a';
+      const suitHi = isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#f59e0b' : '#ced5e0';
+      const helmetC = isStick ? '#1c2024' : isNeon ? '#00e5ff' : isCyber ? '#f59e0b' : '#e0141e';
+      const visorC = isStick ? '#00d2ff' : isNeon ? '#ffffff' : isCyber ? '#00e5ff' : '#111215';
+
+      ctx.save();
+      ctx.rotate(bike.lean * 0.4);
+
+      this.drawLimb(ctx, -2, -4, -7, -5.5, 4.8, suitC, suitHi);
+      this.drawLimb(ctx, -2, 4, -7, 5.5, 4.8, suitC, suitHi);
+      this.drawLimb(ctx, 0, -4, 7, -8.5, 5.2, suitC, suitHi);
+      this.drawLimb(ctx, 0, 4, 7, 8.5, 5.2, suitC, suitHi);
+      this.drawHand(ctx, 8, -8.5, 3.2, -0.2, suitC, suitHi, -1, true);
+      this.drawHand(ctx, 8, 8.5, 3.2, 0.2, suitC, suitHi, 1, true);
+
+      const torsoG = ctx.createLinearGradient(-6, -4, 4, 4);
+      torsoG.addColorStop(0, suitHi);
+      torsoG.addColorStop(0.5, suitC);
+      torsoG.addColorStop(1, '#111215');
+      ctx.fillStyle = torsoG;
+      ctx.beginPath();
+      ctx.ellipse(-1, 0, 6.5, 4.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const helmG = ctx.createRadialGradient(2, -1, 1, 2, 0, 5.5);
+      helmG.addColorStop(0, '#ff4050');
+      helmG.addColorStop(0.6, helmetC);
+      helmG.addColorStop(1, '#8a0a12');
+      ctx.fillStyle = helmG;
+      ctx.beginPath();
+      ctx.ellipse(3, 0, 5.5, 4.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+
+      ctx.fillStyle = visorC;
+      ctx.beginPath();
+      ctx.ellipse(6, 0, 2.2, 3.0, 0, -Math.PI / 2, Math.PI / 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   drawCasing(ctx: CanvasRenderingContext2D, c: Casing) {
     ctx.save();
     ctx.translate(c.x, c.y - c.z);
@@ -2791,6 +3787,111 @@ export class Game {
     ctx.restore();
   }
 
+  drawSingleBaton(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, length = 15, width = 3.6, hasGripWrap = false) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    const halfW = width / 2;
+
+    // Main ebony wood stick body with 3D cylindrical shading
+    const bodyG = ctx.createLinearGradient(0, -halfW, 0, halfW);
+    bodyG.addColorStop(0, '#33373d');
+    bodyG.addColorStop(0.3, '#1c1e22');
+    bodyG.addColorStop(1, '#0e1012');
+    ctx.fillStyle = bodyG;
+    ctx.fillRect(0, -halfW, length, width);
+
+    // Subtle edge highlight along the wood
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(1, -halfW, length - 2, 0.7);
+
+    // Brass collars (ferrules) at both ends
+    const drawCollar = (cx: number, cw: number) => {
+      const g = ctx.createLinearGradient(0, -halfW - 0.4, 0, halfW + 0.4);
+      g.addColorStop(0, '#fced85');
+      g.addColorStop(0.35, '#d4af37');
+      g.addColorStop(1, '#7a5e12');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx, -halfW - 0.4, cw, width + 0.8);
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.fillRect(cx, -halfW - 0.4, cw, 0.6);
+    };
+
+    // Base end cap
+    drawCollar(0, 2.2);
+    // Tip collar where chain mounts
+    drawCollar(length - 2.6, 2.6);
+
+    // Swivel ring at tip
+    ctx.strokeStyle = '#fced85';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.arc(length + 0.6, 0, 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Decorative martial grip wrap if requested (on held baton)
+    if (hasGripWrap) {
+      ctx.strokeStyle = '#c4202d';
+      ctx.lineWidth = 0.9;
+      const wrapStart = 3.5, wrapEnd = length - 4.5;
+      for (let wx = wrapStart; wx < wrapEnd; wx += 2.2) {
+        ctx.beginPath();
+        ctx.moveTo(wx, -halfW);
+        ctx.lineTo(wx + 1.2, halfW);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(wx + 1.2, -halfW);
+        ctx.lineTo(wx, halfW);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  drawChain(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, count = 4) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.max(0.1, Math.hypot(dx, dy));
+    const baseAngle = Math.atan2(dy, dx);
+    const linkLen = dist / count;
+
+    for (let i = 0; i < count; i++) {
+      const t = (i + 0.5) / count;
+      const lx = x1 + dx * t;
+      const ly = y1 + dy * t;
+      const isAlt = i % 2 === 1;
+
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.rotate(baseAngle);
+
+      // Shadow / ambient glow
+      ctx.fillStyle = 'rgba(15,15,20,0.4)';
+      ctx.beginPath();
+      ctx.ellipse(0.3, 0.4, linkLen * 0.55, isAlt ? 1.8 : 1.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Metallic chain link ring
+      const g = ctx.createLinearGradient(0, -2, 0, 2);
+      g.addColorStop(0, '#fff49e');
+      g.addColorStop(0.35, '#d4af37');
+      g.addColorStop(1, '#664c0a');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1.35;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, linkLen * 0.55, isAlt ? 1.8 : 1.2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Gleam dot on link vertex
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(-linkLen * 0.2, -0.4, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }
+
   drawWeapon(ctx: CanvasRenderingContext2D, t: WType) {
     ctx.fillStyle = '#0b0b0b';
     ctx.strokeStyle = '#4a4a4a';
@@ -2805,34 +3906,14 @@ export class Game {
         rect(-2, -1.5, 6, 3);
         ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(16, -0.5); ctx.lineTo(4, 1.5); ctx.closePath(); ctx.fill(); ctx.stroke(); break;
       case 'katana':
-        rect(-3, -1.4, 8, 2.8); rect(5, -3, 1.6, 6);
-        ctx.beginPath(); ctx.moveTo(6.6, -1.2); ctx.lineTo(34, -1.6); ctx.lineTo(37, 0); ctx.lineTo(6.6, 1.2); ctx.closePath(); ctx.fill(); ctx.stroke(); break;
+        this.drawSaya(ctx, false);
+        this.drawDetailedKatana(ctx, 0, 3, 0, 37);
+        break;
       case 'nunchaku': {
-        // Baton 1 (held in hand)
-        ctx.fillStyle = '#1c1c1f';
-        ctx.fillRect(-2, -1.8, 16, 3.6);
-        ctx.fillStyle = '#d4af37';
-        ctx.fillRect(-2, -1.9, 2.5, 3.8);
-        ctx.fillRect(11, -2, 3, 4);
-        // Interlinked chain links
-        ctx.strokeStyle = '#d4af37';
-        ctx.lineWidth = 1.3;
-        ctx.beginPath();
-        ctx.ellipse(15.5, 0, 2.6, 1.4, 0, 0, Math.PI * 2);
-        ctx.ellipse(19.5, 0, 2.6, 1.4, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        // Baton 2 (dynamic spinning inertia)
-        ctx.save();
-        const spinOsc = Math.sin(this.time * 22) * 0.45 + 0.85;
-        ctx.translate(22, 0);
-        ctx.rotate(spinOsc);
-        ctx.fillStyle = '#d4af37';
-        ctx.fillRect(0, -2, 3, 4);
-        ctx.fillStyle = '#1c1c1f';
-        ctx.fillRect(3, -1.8, 16, 3.6);
-        ctx.fillStyle = '#d4af37';
-        ctx.fillRect(16.5, -1.9, 2.5, 3.8);
-        ctx.restore();
+        // Natural resting martial fold on floor (stationary, zero artificial jitter!)
+        this.drawSingleBaton(ctx, 0, 0, 0, 15, 3.4, true);
+        this.drawChain(ctx, 15, 0, 12.5, 6.5, 3);
+        this.drawSingleBaton(ctx, 12.5, 6.5, 0.55, 15, 3.4, false);
         break;
       }
       case 'pistol': rect(0, -2, 13, 4); rect(0, 1, 4, 4); break;
@@ -2906,6 +3987,622 @@ export class Game {
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.beginPath(); ctx.ellipse(-r * 0.14, -palmY * 0.37, palmX * 0.65, palmY * 0.23, -0.1, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+  }
+
+  drawNunchakuCombat(
+    ctx: CanvasRenderingContext2D,
+    o: { swing?: Swing | null; moveSpeed?: number; hurt?: number; stagger?: number; boss?: boolean },
+    armC: string,
+    armHi: string,
+    gait: number,
+    phase: number,
+    attackAnim: number,
+    windup: number
+  ) {
+    const sw = o.swing;
+    const isSwinging = (sw && sw.t <= sw.dur * 1.35) || attackAnim > 0.02;
+    const isWindingUp = windup > 0;
+
+    let u = 0;
+    let dir = 1;
+    let from = -1.9;
+    let to = 1.6;
+    let isSpin = false;
+    let fade = 0;
+
+    if (sw) {
+      u = Math.min(1, Math.max(0, sw.t / sw.dur));
+      dir = Math.sign(sw.to - sw.from) || 1;
+      from = sw.from;
+      to = sw.to;
+      isSpin = !!sw.spin;
+      fade = sw.t <= sw.dur ? 1 : Math.max(0, 1 - (sw.t - sw.dur) / 0.16);
+    } else if (attackAnim > 0) {
+      const dur = 0.2;
+      u = Math.min(1, Math.max(0, 1 - attackAnim / dur));
+      dir = 1;
+      from = -1.7;
+      to = 1.8;
+      isSpin = false;
+      fade = Math.min(1, attackAnim / 0.12);
+    }
+
+    // 1. Off-hand (Left Arm): Martial Guard Pose (Bruce Lee / JKD)
+    let offElbow = { x: 5, y: -10 };
+    let offHand = { x: 10, y: -5 };
+    let offHandAngle = 0.15;
+
+    if (isSpin) {
+      const spinAngle = from + (to - from) * u - Math.PI * 0.6;
+      offElbow = { x: Math.cos(spinAngle) * 6, y: Math.sin(spinAngle) * 6 - 4 };
+      offHand = { x: Math.cos(spinAngle) * 12, y: Math.sin(spinAngle) * 12 - 3 };
+      offHandAngle = spinAngle + 0.3;
+    } else if (isSwinging) {
+      if (dir > 0) {
+        const p = Math.sin(u * Math.PI);
+        offElbow = { x: 4 - p * 3, y: -10 - p * 2 };
+        offHand = { x: 8 - p * 4, y: -6 - p * 4 };
+        offHandAngle = -0.3;
+      } else {
+        const p = Math.sin(u * Math.PI);
+        offElbow = { x: 6 + p * 2, y: -8 + p * 3 };
+        offHand = { x: 11 + p * 2, y: -3 + p * 4 };
+        offHandAngle = 0.4;
+      }
+    } else {
+      const sway = Math.sin(phase + Math.PI) * gait * 0.8;
+      offElbow = { x: 5 + sway * 0.4, y: -10 + sway * 0.2 };
+      offHand = { x: 10.5 + sway * 0.6, y: -5 + sway * 0.3 };
+      offHandAngle = 0.12 + sway * 0.05;
+    }
+
+    this.drawLimb(ctx, 0, -7.5, offElbow.x, offElbow.y, 6.2, armC, armHi);
+    this.drawLimb(ctx, offElbow.x, offElbow.y, offHand.x, offHand.y, 5.2, armC, armHi);
+    this.drawHand(ctx, offHand.x, offHand.y, 3.6, offHandAngle, armC, armHi, -1, true);
+
+    // 2. Right Arm & Nunchaku Double-Pendulum Physical Kinematics
+    const shoulder = { x: 0, y: 8.2 };
+
+    if (!isSwinging && !isWindingUp) {
+      // IDLE / RUNNING: AUTHENTIC BRUCE LEE UNDERARM TUCK (ZERO jitter!)
+      const tuckSway = Math.sin(phase) * gait * 0.6;
+      const elbow = { x: 5 + tuckSway * 0.3, y: 7.8 + tuckSway * 0.2 };
+      const hand = { x: 11 + tuckSway * 0.4, y: 4.8 + tuckSway * 0.3 };
+      const handAng = -0.14 + tuckSway * 0.04;
+
+      this.drawLimb(ctx, shoulder.x, shoulder.y, elbow.x, elbow.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbow.x, elbow.y, hand.x, hand.y, 5.2, armC, armHi);
+      this.drawHand(ctx, hand.x, hand.y, 3.7, handAng, armC, armHi, 1, true);
+
+      // Baton 1 (Held in hand, pointing forward)
+      const b1Angle = handAng;
+      const b1Len = 14;
+      const b1Tip = { x: hand.x + Math.cos(b1Angle) * b1Len, y: hand.y + Math.sin(b1Angle) * b1Len };
+      this.drawSingleBaton(ctx, hand.x - Math.cos(b1Angle) * 2, hand.y - Math.sin(b1Angle) * 2, b1Angle, b1Len + 2, 3.5, true);
+
+      // Chain loops cleanly into underarm tuck
+      const b2Base = { x: 18.5 + tuckSway * 0.3, y: 9.2 + tuckSway * 0.2 };
+      this.drawChain(ctx, b1Tip.x, b1Tip.y, b2Base.x, b2Base.y, 3);
+
+      // Baton 2 tucked securely under right armpit along ribs
+      const b2Angle = Math.PI - 0.06;
+      this.drawSingleBaton(ctx, b2Base.x, b2Base.y, b2Angle, 14.5, 3.5, false);
+
+    } else if (isWindingUp) {
+      // WINDUP: Arm drawn back, chain taut, ready to whip
+      const elbow = { x: 2, y: 9 };
+      const hand = { x: 1, y: 11.5 };
+      const handAng = 2.3;
+
+      this.drawLimb(ctx, shoulder.x, shoulder.y, elbow.x, elbow.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbow.x, elbow.y, hand.x, hand.y, 5.2, armC, armHi);
+      this.drawHand(ctx, hand.x, hand.y, 3.7, handAng, armC, armHi, 1, true);
+
+      const b1Tip = { x: hand.x + Math.cos(handAng) * 14, y: hand.y + Math.sin(handAng) * 14 };
+      this.drawSingleBaton(ctx, hand.x, hand.y, handAng, 14, 3.5, true);
+
+      const chainAng = handAng + 0.3;
+      const b2Base = { x: b1Tip.x + Math.cos(chainAng) * 9, y: b1Tip.y + Math.sin(chainAng) * 9 };
+      this.drawChain(ctx, b1Tip.x, b1Tip.y, b2Base.x, b2Base.y, 3);
+
+      const b2Angle = handAng + 0.45;
+      this.drawSingleBaton(ctx, b2Base.x, b2Base.y, b2Angle, 14.5, 3.5, false);
+
+    } else {
+      // ACTIVE SWING: TRUE DOUBLE-PENDULUM WHIPPING PHYSICS
+      let armAngle: number;
+      if (isSpin) {
+        armAngle = from + (to - from) * u;
+      } else {
+        let whipProg: number;
+        if (u < 0.22) {
+          whipProg = 0.5 * Math.pow(u / 0.22, 1.8) * 0.15;
+        } else if (u < 0.66) {
+          const p = (u - 0.22) / 0.44;
+          whipProg = 0.075 + (1 - Math.cos(p * Math.PI)) * 0.5 * 0.745;
+        } else {
+          const p = (u - 0.66) / 0.34;
+          whipProg = 0.82 + Math.sin(p * Math.PI * 0.5) * 0.18;
+        }
+        armAngle = from + (to - from) * whipProg;
+      }
+
+      // Dynamic forward reach extension during strike apex
+      const reachBonus = isSpin ? 3.5 : Math.sin(Math.min(1, Math.max(0, (u - 0.18) / 0.55)) * Math.PI) * 4.5;
+      const elbow = {
+        x: shoulder.x + Math.cos(armAngle - dir * 0.22) * 5.5,
+        y: shoulder.y + Math.sin(armAngle - dir * 0.22) * 5.5,
+      };
+      const hand = {
+        x: elbow.x + Math.cos(armAngle) * (6.5 + reachBonus),
+        y: elbow.y + Math.sin(armAngle) * (6.5 + reachBonus),
+      };
+      const wristAngle = armAngle + dir * 0.22;
+
+      this.drawLimb(ctx, shoulder.x, shoulder.y, elbow.x, elbow.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbow.x, elbow.y, hand.x, hand.y, 5.2, armC, armHi);
+      this.drawHand(ctx, hand.x, hand.y, 3.7, wristAngle, armC, armHi, 1, true);
+
+      // Baton 1 (Held Baton)
+      const b1Angle = wristAngle;
+      const b1Len = 14;
+      const b1Tip = {
+        x: hand.x + Math.cos(b1Angle) * b1Len,
+        y: hand.y + Math.sin(b1Angle) * b1Len,
+      };
+      this.drawSingleBaton(ctx, hand.x - Math.cos(b1Angle) * 2, hand.y - Math.sin(b1Angle) * 2, b1Angle, b1Len + 2, 3.5, true);
+
+      // Free Baton 2 Whipping Physics: Lag -> Centrifugal Extension -> Snap -> Wrap
+      let deltaAngle: number;
+      if (isSpin) {
+        deltaAngle = -dir * 0.36 + Math.sin(u * 22) * 0.05;
+      } else {
+        if (u < 0.28) {
+          const p = u / 0.28;
+          deltaAngle = -dir * (2.1 * (1 - p) + 1.15 * p);
+        } else if (u < 0.48) {
+          const p = (u - 0.28) / 0.20;
+          deltaAngle = -dir * 1.15 * (1 - p);
+        } else if (u < 0.70) {
+          // Whipping snap: cracks forward ahead of Baton 1
+          const p = (u - 0.48) / 0.22;
+          deltaAngle = +dir * 0.62 * Math.sin(p * Math.PI);
+        } else {
+          // Wrap and catch follow-through
+          const p = (u - 0.70) / 0.30;
+          deltaAngle = +dir * 0.1 * (1 - p) - dir * 2.2 * p;
+        }
+      }
+
+      const chainAngle = b1Angle + deltaAngle * 0.48;
+      const chainLen = 9.5;
+      const b2Base = {
+        x: b1Tip.x + Math.cos(chainAngle) * chainLen,
+        y: b1Tip.y + Math.sin(chainAngle) * chainLen,
+      };
+      this.drawChain(ctx, b1Tip.x, b1Tip.y, b2Base.x, b2Base.y, 4);
+
+      const b2Angle = b1Angle + deltaAngle;
+      const b2Len = 14.5;
+      const b2Tip = {
+        x: b2Base.x + Math.cos(b2Angle) * b2Len,
+        y: b2Base.y + Math.sin(b2Angle) * b2Len,
+      };
+      this.drawSingleBaton(ctx, b2Base.x, b2Base.y, b2Angle, b2Len, 3.5, false);
+
+      // Dynamic Motion Ribbons & Whipping Trail
+      if (fade > 0.05) {
+        ctx.save();
+        if (isSpin) {
+          const ringRad = Math.hypot(b2Tip.x, b2Tip.y);
+          const innerRad = Math.hypot(b1Tip.x, b1Tip.y);
+
+          ctx.strokeStyle = `rgba(245,185,45,${0.85 * fade})`;
+          ctx.lineWidth = 3.2;
+          ctx.beginPath();
+          ctx.arc(0, 0, ringRad, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(255,248,180,${0.9 * fade})`;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(0, 0, ringRad - 0.5, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(220,150,30,${0.45 * fade})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(0, 0, innerRad, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(255,230,120,${0.35 * fade})`;
+          ctx.lineWidth = 1.0;
+          for (let s = 0; s < 4; s++) {
+            const a = (this.time * 16 + (s * Math.PI) / 2) % (Math.PI * 2);
+            ctx.beginPath();
+            ctx.arc(0, 0, ringRad + 3, a, a + 0.6);
+            ctx.stroke();
+          }
+        } else {
+          const arcRad = Math.hypot(b2Tip.x, b2Tip.y);
+          const totalSweep = Math.abs(to - from);
+          const headAngle = Math.atan2(b2Tip.y, b2Tip.x);
+          const sweepLen = Math.min(totalSweep, 2.6) * Math.min(1, u * 1.5);
+
+          ctx.strokeStyle = `rgba(245,185,45,${0.9 * fade})`;
+          ctx.lineWidth = 3.0;
+          ctx.beginPath();
+          ctx.arc(0, 0, arcRad, headAngle, headAngle - dir * sweepLen, dir > 0);
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(255,250,200,${0.95 * fade})`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(0, 0, arcRad + 0.5, headAngle, headAngle - dir * sweepLen * 0.75, dir > 0);
+          ctx.stroke();
+
+          const innerRad = Math.hypot(b1Tip.x, b1Tip.y);
+          ctx.strokeStyle = `rgba(215,145,30,${0.5 * fade})`;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(0, 0, innerRad, headAngle, headAngle - dir * sweepLen * 0.6, dir > 0);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  drawDetailedKatana(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, length = 38, isSwinging = false) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    // 1. Kashira (Golden Pommel Ring)
+    ctx.fillStyle = '#b8860b';
+    ctx.beginPath();
+    ctx.ellipse(-4.2, 0, 1.2, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Tsuka (Samurai Hilt with Silk Ito Wrap over Samegawa)
+    ctx.fillStyle = '#f0f3f6'; // white rayskin
+    ctx.fillRect(-3.8, -1.3, 9.2, 2.6);
+    // Diamond braided wrap (tsuka-ito)
+    ctx.fillStyle = '#141416';
+    for (let i = 0; i < 4; i++) {
+      const wx = -3.2 + i * 2.2;
+      ctx.beginPath();
+      ctx.moveTo(wx, -1.4);
+      ctx.lineTo(wx + 1.1, 0);
+      ctx.lineTo(wx, 1.4);
+      ctx.lineTo(wx - 0.4, 1.4);
+      ctx.lineTo(wx + 0.6, 0);
+      ctx.lineTo(wx - 0.4, -1.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(wx + 2.0, -1.4);
+      ctx.lineTo(wx + 0.9, 0);
+      ctx.lineTo(wx + 2.0, 1.4);
+      ctx.lineTo(wx + 1.6, 1.4);
+      ctx.lineTo(wx + 0.5, 0);
+      ctx.lineTo(wx + 1.6, -1.4);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 3. Tsuba (Ornate Sword Guard): oval antique iron with gilded rim
+    ctx.fillStyle = '#181a1f';
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.ellipse(5.8, 0, 1.6, 4.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 4. Habaki (Gilded Brass Blade Collar)
+    ctx.fillStyle = '#e6b800';
+    ctx.fillRect(6.6, -1.3, 2.2, 2.6);
+
+    // 5. Tamahagane Curved Blade (Nagasa)
+    const bladeLen = length;
+    const curve = -1.8; // graceful Japanese curvature (sori)
+
+    ctx.beginPath();
+    ctx.moveTo(8.8, -1.3);
+    ctx.quadraticCurveTo(8.8 + bladeLen * 0.5, -1.3 + curve * 0.6, 8.8 + bladeLen, -0.4 + curve);
+    ctx.lineTo(8.8 + bladeLen + 3.2, 0.4 + curve); // kissaki point
+    ctx.quadraticCurveTo(8.8 + bladeLen * 0.5, 1.4 + curve * 0.6, 8.8, 1.4);
+    ctx.closePath();
+
+    const bladeGrad = ctx.createLinearGradient(8.8, -2, 8.8, 2);
+    bladeGrad.addColorStop(0, '#2b303c'); // dark folded spine
+    bladeGrad.addColorStop(0.35, '#8c96a8'); // tempered steel
+    bladeGrad.addColorStop(0.75, '#e2e8f0'); // mirror polished ji
+    bladeGrad.addColorStop(1, '#ffffff'); // razor cutting edge
+    ctx.fillStyle = bladeGrad;
+    ctx.fill();
+
+    // Hamon (wavy temper line)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(11, 0.6);
+    for (let k = 1; k <= 6; k++) {
+      const kx = 11 + k * (bladeLen * 0.14);
+      const wave = (k % 2 === 0 ? 0.4 : -0.3);
+      ctx.lineTo(kx, 0.6 + wave + (curve * k) / 7);
+    }
+    ctx.stroke();
+
+    // Dynamic Edge Specular Glint
+    if (isSwinging) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(8.8 + bladeLen * 0.2, 1.2 + curve * 0.2);
+      ctx.lineTo(8.8 + bladeLen + 2.5, 0.4 + curve);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  drawSaya(ctx: CanvasRenderingContext2D, _isSwinging = false) {
+    ctx.save();
+    // Positioned authentically at the samurai's left hip along the obi sash
+    ctx.translate(-2, -8.5);
+    ctx.rotate(0.28);
+
+    // 1. Kurorushiji lacquer scabbard body (deep black lacquer with glossy reflections)
+    ctx.beginPath();
+    ctx.moveTo(3, -1.6);
+    ctx.quadraticCurveTo(-10, -2.8, -23, -2.1);
+    ctx.lineTo(-24, 1.2);
+    ctx.quadraticCurveTo(-10, 0.6, 3, 1.6);
+    ctx.closePath();
+
+    const sayaGrad = ctx.createLinearGradient(0, -2, 0, 2);
+    sayaGrad.addColorStop(0, '#101114');
+    sayaGrad.addColorStop(0.35, '#2e323b');
+    sayaGrad.addColorStop(0.75, '#17191e');
+    sayaGrad.addColorStop(1, '#0c0d0f');
+    ctx.fillStyle = sayaGrad;
+    ctx.fill();
+
+    // 2. Kojiri (gilded brass scabbard tail fitting)
+    ctx.fillStyle = '#d4af37';
+    ctx.beginPath();
+    ctx.ellipse(-23.5, -0.4, 1.4, 1.7, 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. Koiguchi (scabbard mouth rim where the blade sheaths)
+    ctx.fillStyle = '#e6b800';
+    ctx.fillRect(1.5, -1.8, 2.0, 3.6);
+
+    // 4. Kurikata & Sageo cord (crimson braided samurai cord loop)
+    ctx.fillStyle = '#c4202d';
+    ctx.beginPath();
+    ctx.arc(-5.5, -2.4, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sageo cord ribbons fluttering behind hip
+    ctx.strokeStyle = '#e02838';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(-5.5, -2.4);
+    ctx.quadraticCurveTo(-8, -5.5, -12, -6.5);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawKatanaCombat(
+    ctx: CanvasRenderingContext2D,
+    o: { swing?: Swing | null; moveSpeed?: number; hurt?: number; stagger?: number; boss?: boolean },
+    armC: string,
+    armHi: string,
+    gait: number,
+    phase: number,
+    attackAnim: number,
+    windup: number
+  ) {
+    const sw = o.swing;
+    const isSwinging = (sw && sw.t <= sw.dur * 1.35) || attackAnim > 0.02;
+    const isWindingUp = windup > 0;
+
+    let u = 0;
+    let dir = 1;
+    let from = -1.9;
+    let to = 1.6;
+    let isSpin = false;
+    let fade = 0;
+
+    if (sw) {
+      u = Math.min(1, Math.max(0, sw.t / sw.dur));
+      dir = Math.sign(sw.to - sw.from) || 1;
+      from = sw.from;
+      to = sw.to;
+      isSpin = !!sw.spin;
+      fade = sw.t <= sw.dur ? 1 : Math.max(0, 1 - (sw.t - sw.dur) / 0.16);
+    } else if (attackAnim > 0) {
+      const dur = 0.22;
+      u = Math.min(1, Math.max(0, 1 - attackAnim / dur));
+      dir = 1;
+      from = -1.8;
+      to = 1.9;
+      isSpin = false;
+      fade = Math.min(1, attackAnim / 0.12);
+    }
+
+    const shoulderR = { x: 0, y: 7.5 };
+    const shoulderL = { x: 0, y: -7.5 };
+
+    if (!isSwinging && !isWindingUp) {
+      if (gait > 0.35) {
+        // DYNAMIC SPRINT CHARGE STANCE (Waki-gamae forward samurai rush)
+        const sprintAng = -0.35 + Math.sin(phase) * 0.14;
+        const elbowR = { x: 4, y: 8.2 };
+        const handR = { x: 7, y: 6.8 };
+        const elbowL = { x: 4, y: -6.2 };
+        const handL = { x: 8, y: -1.8 };
+
+        this.drawLimb(ctx, shoulderL.x, shoulderL.y, elbowL.x, elbowL.y, 6.2, armC, armHi);
+        this.drawLimb(ctx, elbowL.x, elbowL.y, handL.x, handL.y, 5.2, armC, armHi);
+        this.drawHand(ctx, handL.x, handL.y, 3.6, -0.15, armC, armHi, -1, true);
+
+        this.drawLimb(ctx, shoulderR.x, shoulderR.y, elbowR.x, elbowR.y, 6.2, armC, armHi);
+        this.drawLimb(ctx, elbowR.x, elbowR.y, handR.x, handR.y, 5.2, armC, armHi);
+        this.drawHand(ctx, handR.x, handR.y, 3.7, sprintAng, armC, armHi, 1, true);
+
+        this.drawDetailedKatana(ctx, handR.x, handR.y, sprintAng, 37, false);
+
+        // Wind speedlines slicing behind blade in sprint
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(handR.x + Math.cos(sprintAng) * 26, handR.y + Math.sin(sprintAng) * 26);
+        ctx.lineTo(handR.x - 14, handR.y + Math.sin(sprintAng) * 26);
+        ctx.stroke();
+      } else {
+        // 1. AUTHENTIC SAMURAI TWO-HANDED STANCE (Kendo Chūdan-no-kamae)
+        const sway = Math.sin(phase) * gait * 0.7;
+        const breath = Math.sin(this.time * 3.5) * 0.4;
+
+        // Right arm (dominant): grips forward near tsuba
+        const elbowR = { x: 6 + sway * 0.4, y: 7.0 + sway * 0.2 };
+        const handR = { x: 12 + sway * 0.5 + breath, y: 3.2 + sway * 0.1 };
+        const handAngR = 0.08 + sway * 0.03;
+
+        // Left arm (supporting): grips tsuka pommel right behind right hand
+        const elbowL = { x: 4.5 + sway * 0.4, y: -6.0 + sway * 0.2 };
+        const handL = { x: 7.5 + sway * 0.5 + breath, y: 0.8 + sway * 0.1 };
+        const handAngL = 0.14 + sway * 0.03;
+
+        this.drawLimb(ctx, shoulderL.x, shoulderL.y, elbowL.x, elbowL.y, 6.2, armC, armHi);
+        this.drawLimb(ctx, elbowL.x, elbowL.y, handL.x, handL.y, 5.2, armC, armHi);
+        this.drawHand(ctx, handL.x, handL.y, 3.6, handAngL, armC, armHi, -1, true);
+
+        this.drawLimb(ctx, shoulderR.x, shoulderR.y, elbowR.x, elbowR.y, 6.2, armC, armHi);
+        this.drawLimb(ctx, elbowR.x, elbowR.y, handR.x, handR.y, 5.2, armC, armHi);
+        this.drawHand(ctx, handR.x, handR.y, 3.7, handAngR, armC, armHi, 1, true);
+
+        // The Katana is held in the two-handed grip pointing forward
+        const bladeAng = Math.atan2(handR.y - handL.y, handR.x - handL.x) * 0.4 + 0.04;
+        this.drawDetailedKatana(ctx, handR.x, handR.y, bladeAng, 37, false);
+
+        // Occasional steel gleam shimmer running down the blade
+        const shimmer = Math.sin(this.time * 6);
+        if (shimmer > 0.7) {
+          ctx.save();
+          ctx.translate(handR.x, handR.y);
+          ctx.rotate(bladeAng);
+          const glintPos = 14 + ((this.time * 28) % 24);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.beginPath();
+          ctx.arc(glintPos, -0.6, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+    } else if (isWindingUp) {
+      // 2. IAIDŌ BATTŌJUTSU / JŌDAN WINDUP: blade pulled back, ready to strike
+      const elbowR = { x: 3, y: 10 };
+      const handR = { x: 3, y: 12 };
+      const handAngR = 2.4;
+
+      const elbowL = { x: 1, y: -4 };
+      const handL = { x: 2, y: 7 };
+      const handAngL = 2.2;
+
+      this.drawLimb(ctx, shoulderL.x, shoulderL.y, elbowL.x, elbowL.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbowL.x, elbowL.y, handL.x, handL.y, 5.2, armC, armHi);
+      this.drawHand(ctx, handL.x, handL.y, 3.6, handAngL, armC, armHi, -1, true);
+
+      this.drawLimb(ctx, shoulderR.x, shoulderR.y, elbowR.x, elbowR.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbowR.x, elbowR.y, handR.x, handR.y, 5.2, armC, armHi);
+      this.drawHand(ctx, handR.x, handR.y, 3.7, handAngR, armC, armHi, 1, true);
+
+      this.drawDetailedKatana(ctx, handR.x, handR.y, handAngR, 37, true);
+
+    } else {
+      // 3. DYNAMIC SAMURAI SLASH EXECUTION: Both hands power through the cut
+      const eased = 1 - Math.pow(1 - u, 3);
+      const curAng = from + (to - from) * eased;
+      const head = curAng;
+
+      // Render the spectacular Samurai Crescent Slash Trail
+      if (fade > 0) {
+        ctx.save();
+        ctx.translate(0, 0);
+
+        const r0 = 16, r1 = isSpin ? 58 : 54;
+        const total = Math.min(Math.abs(head - from), isSpin ? Math.PI * 2.2 : 2.8);
+        const N = 20;
+
+        // Layer 1: Crimson Calligraphy Brush Arc (sumi-e blood & ink trail)
+        for (let k = 0; k < N; k++) {
+          const a0 = head - dir * total * (k / N);
+          const a1 = head - dir * total * ((k + 1) / N);
+          const al = (1 - k / N) * fade;
+          ctx.fillStyle = `rgba(${235 - k * 3}, ${18 + k * 2}, ${38 + k * 2}, ${al * 0.44})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r1 + 3, a0, a1, dir > 0);
+          ctx.arc(0, 0, r0, a1, a0, dir < 0);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Layer 2: Razor White Core Beam (Tamahagane cutting edge)
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.98 * fade})`;
+        ctx.lineWidth = isSpin ? 3.4 : 2.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, r1 - 1, head, head - dir * total * 0.88, dir > 0);
+        ctx.stroke();
+
+        // Layer 3: Secondary Razor Reflection Arc (ice-blue edge glow)
+        ctx.strokeStyle = `rgba(180, 220, 255, ${0.75 * fade})`;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(0, 0, r1 - 7, head, head - dir * total * 0.65, dir > 0);
+        ctx.stroke();
+
+        // Layer 4: Floating Cherry Blossom (Sakura) Petals along slash arc
+        if (fade > 0.25) {
+          for (let s = 0; s < (isSpin ? 6 : 4); s++) {
+            const petAng = head - dir * total * (0.05 + s * 0.16);
+            const petR = r1 + (s % 2 === 0 ? 3 : -4);
+            const px = Math.cos(petAng) * petR, py = Math.sin(petAng) * petR;
+            ctx.fillStyle = s % 2 === 0 ? '#ff758c' : '#ffffff';
+            ctx.beginPath();
+            ctx.ellipse(px, py, 2.2, 1.2, petAng + 0.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        ctx.restore();
+      }
+
+      // Dynamic Two-Handed Hand Positions during swing
+      const gripR = 12.5;
+      const handR = { x: Math.cos(curAng) * gripR + 2, y: Math.sin(curAng) * gripR + 2 };
+      const elbowR = { x: (shoulderR.x + handR.x) * 0.5 + Math.cos(curAng - dir * 0.5) * 4, y: (shoulderR.y + handR.y) * 0.5 + Math.sin(curAng - dir * 0.5) * 4 };
+
+      const gripL = 8.0;
+      const handL = { x: Math.cos(curAng) * gripL - Math.sin(curAng) * 2, y: Math.sin(curAng) * gripL + Math.cos(curAng) * 2 };
+      const elbowL = { x: (shoulderL.x + handL.x) * 0.5 - Math.cos(curAng) * 2, y: (shoulderL.y + handL.y) * 0.5 - Math.sin(curAng) * 2 };
+
+      this.drawLimb(ctx, shoulderL.x, shoulderL.y, elbowL.x, elbowL.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbowL.x, elbowL.y, handL.x, handL.y, 5.2, armC, armHi);
+      this.drawHand(ctx, handL.x, handL.y, 3.6, curAng - 0.2, armC, armHi, -1, true);
+
+      this.drawLimb(ctx, shoulderR.x, shoulderR.y, elbowR.x, elbowR.y, 6.2, armC, armHi);
+      this.drawLimb(ctx, elbowR.x, elbowR.y, handR.x, handR.y, 5.2, armC, armHi);
+      this.drawHand(ctx, handR.x, handR.y, 3.7, curAng, armC, armHi, 1, true);
+
+      this.drawDetailedKatana(ctx, handR.x, handR.y, curAng, 38, true);
+    }
   }
 
   drawHuman(x: number, y: number, angle: number, enemy: boolean, weapon: WType | null, walkT: number, attackAnim: number, facets: number[], windup = 0, muzzle = 0,
@@ -3037,80 +4734,81 @@ export class Game {
       this.drawHand(ctx, -9 - f, -13, 3.5, -2.8, armC, armHi, -1);
       this.drawHand(ctx, -9 + f, 13, 3.5, 2.8, armC, armHi, 1);
     } else if (weapon) {
-      // The free arm guards the upper body while the weapon arm swings.
-      this.drawLimb(ctx, 0, -7.5, 4, -12, 6.2, armC, armHi);
-      this.drawLimb(ctx, 4, -12, 9, -11, 5.2, armC, armHi);
-      this.drawHand(ctx, 9, -11, 3.6, 0.4, armC, armHi, -1, true);
-      const sw = o.swing;
-      let swing: number;
-      if (sw) {
-        const u = Math.min(1, sw.t / sw.dur);
-        const eased = 1 - Math.pow(1 - u, 3);
-        const cur = sw.from + (sw.to - sw.from) * eased;
-        if (sw.t <= sw.dur) swing = cur;
-        else swing = sw.to + angDiff(sw.to, 0.6) * Math.min(1, (sw.t - sw.dur) / 0.18);
-        const fade = sw.t <= sw.dur ? 1 : Math.max(0, 1 - (sw.t - sw.dur) / 0.14);
-        if (fade > 0) {
-          const head = sw.t <= sw.dur ? cur : sw.to;
-          const blade = sw.kind === 'blade';
-          const len = WLEN[weapon] || 28;
-          const r0 = blade ? 15 : 11, r1 = 12 + len;
-          const dir = Math.sign(sw.to - sw.from);
-          const total = Math.min(Math.abs(head - sw.from), sw.spin ? 3.6 : 2.7);
-          const N = 12;
-          ctx.save();
-          ctx.translate(0, 8.2);
-          for (let k = 0; k < N; k++) {
-            const a0 = head - dir * total * (k / N), a1 = head - dir * total * ((k + 1) / N);
-            const al = (1 - k / N) * fade;
-          ctx.fillStyle = blade ? `rgba(116,124,137,${al * 0.28})` : `rgba(151,153,160,${al * 0.24})`;
-            ctx.beginPath();
-            ctx.arc(0, 0, r1, a0, a1, dir > 0);
-            ctx.arc(0, 0, r0, a1, a0, dir < 0);
-            ctx.closePath();
-            ctx.fill();
-          }
-          if (blade) {
-            ctx.strokeStyle = `rgba(255,255,255,${0.95 * fade})`;
-            ctx.lineWidth = 1.6;
-            ctx.beginPath(); ctx.arc(0, 0, r1 - 2, head, head - dir * total * 0.75, dir > 0); ctx.stroke();
-            ctx.strokeStyle = `rgba(224,20,30,${0.8 * fade})`;
-            ctx.lineWidth = 0.8;
-            ctx.beginPath(); ctx.arc(0, 0, r1 + 0.5, head, head - dir * total * 0.5, dir > 0); ctx.stroke();
-          } else if (weapon === 'nunchaku') {
-            ctx.strokeStyle = `rgba(245,185,45,${0.95 * fade})`;
-            ctx.lineWidth = 2.4;
-            ctx.beginPath(); ctx.arc(0, 0, r1 + 4, head, head - dir * total * 0.85, dir > 0); ctx.stroke();
-            ctx.strokeStyle = `rgba(255,235,120,${0.75 * fade})`;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.arc(0, 0, r1 + 1, head, head - dir * total * 0.6, dir > 0); ctx.stroke();
-          } else {
-            ctx.strokeStyle = `rgba(133,139,148,${0.35 * fade})`;
-            ctx.lineWidth = 0.8;
-            for (let j = 0; j < 2; j++) { ctx.beginPath(); ctx.arc(0, 0, r1 + 3 + j * 3, head, head - dir * total * (0.5 - j * 0.12), dir > 0); ctx.stroke(); }
-          }
-          ctx.restore();
-        }
+      if (weapon === 'nunchaku') {
+        this.drawNunchakuCombat(ctx, o, armC, armHi, gait, phase, attackAnim, windup);
+      } else if (weapon === 'katana') {
+        const isSwinging = (o.swing && o.swing.t <= o.swing.dur * 1.35) || attackAnim > 0.02;
+        this.drawSaya(ctx, isSwinging);
+        this.drawKatanaCombat(ctx, o, armC, armHi, gait, phase, attackAnim, windup);
       } else {
-        const prog = attackAnim > 0 ? 1 - attackAnim / 0.2 : 0;
-        swing = -1.1 + prog * 2.4;
-        if (windup > 0) swing = -1.6;
-        if (!attackAnim && !windup) {
-          swing = weapon === 'nunchaku' ? 0.48 + Math.sin(this.time * 9) * 0.22 : 0.6;
+        // The free arm guards the upper body while the weapon arm swings.
+        this.drawLimb(ctx, 0, -7.5, 4, -12, 6.2, armC, armHi);
+        this.drawLimb(ctx, 4, -12, 9, -11, 5.2, armC, armHi);
+        this.drawHand(ctx, 9, -11, 3.6, 0.4, armC, armHi, -1, true);
+        const sw = o.swing;
+        let swing: number;
+        if (sw) {
+          const u = Math.min(1, sw.t / sw.dur);
+          const eased = 1 - Math.pow(1 - u, 3);
+          const cur = sw.from + (sw.to - sw.from) * eased;
+          if (sw.t <= sw.dur) swing = cur;
+          else swing = sw.to + angDiff(sw.to, 0.6) * Math.min(1, (sw.t - sw.dur) / 0.18);
+          const fade = sw.t <= sw.dur ? 1 : Math.max(0, 1 - (sw.t - sw.dur) / 0.14);
+          if (fade > 0) {
+            const head = sw.t <= sw.dur ? cur : sw.to;
+            const blade = sw.kind === 'blade';
+            const len = WLEN[weapon] || 28;
+            const r0 = blade ? 15 : 11, r1 = 12 + len;
+            const dir = Math.sign(sw.to - sw.from);
+            const total = Math.min(Math.abs(head - sw.from), sw.spin ? 3.6 : 2.7);
+            const N = 12;
+            ctx.save();
+            ctx.translate(0, 8.2);
+            for (let k = 0; k < N; k++) {
+              const a0 = head - dir * total * (k / N), a1 = head - dir * total * ((k + 1) / N);
+              const al = (1 - k / N) * fade;
+              ctx.fillStyle = blade ? `rgba(116,124,137,${al * 0.28})` : `rgba(151,153,160,${al * 0.24})`;
+              ctx.beginPath();
+              ctx.arc(0, 0, r1, a0, a1, dir > 0);
+              ctx.arc(0, 0, r0, a1, a0, dir < 0);
+              ctx.closePath();
+              ctx.fill();
+            }
+            if (blade) {
+              ctx.strokeStyle = `rgba(255,255,255,${0.95 * fade})`;
+              ctx.lineWidth = 1.6;
+              ctx.beginPath(); ctx.arc(0, 0, r1 - 2, head, head - dir * total * 0.75, dir > 0); ctx.stroke();
+              ctx.strokeStyle = `rgba(224,20,30,${0.8 * fade})`;
+              ctx.lineWidth = 0.8;
+              ctx.beginPath(); ctx.arc(0, 0, r1 + 0.5, head, head - dir * total * 0.5, dir > 0); ctx.stroke();
+            } else {
+              ctx.strokeStyle = `rgba(133,139,148,${0.35 * fade})`;
+              ctx.lineWidth = 0.8;
+              for (let j = 0; j < 2; j++) { ctx.beginPath(); ctx.arc(0, 0, r1 + 3 + j * 3, head, head - dir * total * (0.5 - j * 0.12), dir > 0); ctx.stroke(); }
+            }
+            ctx.restore();
+          }
+        } else {
+          const prog = attackAnim > 0 ? 1 - attackAnim / 0.2 : 0;
+          swing = -1.1 + prog * 2.4;
+          if (windup > 0) swing = -1.6;
+          if (!attackAnim && !windup) {
+            swing = 0.6;
+          }
         }
-      }
-      ctx.save();
-      ctx.translate(0, 8.2);
-      ctx.rotate(swing);
-      this.drawLimb(ctx, -1, 0, 5, -2, 6.2, armC, armHi);
-      this.drawLimb(ctx, 5, -2, 10, 0, 5.2, armC, armHi);
-      ctx.save(); ctx.translate(10, 0); this.drawWeapon(ctx, weapon); ctx.restore();
-      this.drawHand(ctx, 10, 0, 3.7, 0, armC, armHi, 1, true);
-      ctx.restore();
-      if (!sw && attackAnim > 0.05) {
-        ctx.strokeStyle = 'rgba(146,149,156,0.28)';
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 8.2, 34, -1.1, swing); ctx.stroke();
+        ctx.save();
+        ctx.translate(0, 8.2);
+        ctx.rotate(swing);
+        this.drawLimb(ctx, -1, 0, 5, -2, 6.2, armC, armHi);
+        this.drawLimb(ctx, 5, -2, 10, 0, 5.2, armC, armHi);
+        ctx.save(); ctx.translate(10, 0); this.drawWeapon(ctx, weapon); ctx.restore();
+        this.drawHand(ctx, 10, 0, 3.7, 0, armC, armHi, 1, true);
+        ctx.restore();
+        if (!sw && attackAnim > 0.05) {
+          ctx.strokeStyle = 'rgba(146,149,156,0.28)';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(0, 8.2, 34, -1.1, swing); ctx.stroke();
+        }
       }
     } else {
       // fists: alternating jab/cross
@@ -3484,8 +5182,20 @@ export class Game {
       ctx.fillStyle = 'rgba(30,30,50,0.15)';
       ctx.beginPath(); ctx.ellipse(2, 3, 12, 5, pk.angle, 0, Math.PI * 2); ctx.fill();
       ctx.rotate(pk.angle);
-      ctx.translate(-10, 0);
-      this.drawWeapon(ctx, pk.type);
+      if (pk.type === 'nunchaku' && pk.thrown) {
+        // High-speed spinning centrifugal projectile: both batons fly fully extended from center chain!
+        this.drawChain(ctx, -5, 0, 5, 0, 3);
+        this.drawSingleBaton(ctx, -5, 0, Math.PI, 15, 3.4, true);
+        this.drawSingleBaton(ctx, 5, 0, 0, 15, 3.4, false);
+        ctx.strokeStyle = 'rgba(245,185,45,0.35)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 19, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.translate(-10, 0);
+        this.drawWeapon(ctx, pk.type);
+      }
       ctx.restore();
     }
     const p = this.player;
@@ -3556,6 +5266,30 @@ export class Game {
       }
     }
 
+    // ---------------- Kawasaki Ninja Motorcycles (Parked & Ghost-Riding) ----------------
+    for (const bike of (this.bikes || [])) {
+      if (!bike.mounted) this.drawBike(ctx, bike);
+    }
+
+    // Floating prompt to mount nearby Kawasaki Ninja
+    if (p.alive && !this.ridingBike) {
+      const nearBike = (this.bikes || []).find((b) => !b.mounted && Math.hypot(b.x - p.x, b.y - p.y) < 46);
+      if (nearBike) {
+        ctx.save();
+        const tagY = nearBike.y - 25;
+        ctx.fillStyle = 'rgba(12, 14, 18, 0.92)';
+        ctx.fillRect(nearBike.x - 48, tagY - 10, 96, 18);
+        ctx.strokeStyle = '#20d040';
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(nearBike.x - 48, tagY - 10, 96, 18);
+        ctx.fillStyle = '#20d040';
+        ctx.font = 'bold 9px IBM Plex Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('[E / F] NAIK NINJA', nearBike.x, tagY + 3);
+        ctx.restore();
+      }
+    }
+
     for (const e of this.enemies) {
       if (e.state === 'down' || e === this.hostage) continue;
       this.drawHuman(e.x, e.y, e.angle, true, e.weapon, e.walkT, e.attackAnim, e.facets, e.windup, e.muzzle, { flash: e.hitFlash, stagger: e.stagger, moveSpeed: e.moveSpeed, boss: e.boss });
@@ -3594,12 +5328,33 @@ export class Game {
       }
     }
     if (p.alive) {
-      this.drawHuman(p.x, p.y, p.angle, false, p.weapon, p.walkT, p.attackAnim, [1, 1.04, 0.95, 1.05, 1, 0.96, 1.06, 0.97, 1.02], 0, p.muzzle,
-        { kick: p.kickAnim, side: p.punchSide, fistDur: 0.13, recoil: p.recoil, swing: p.swing, flash: p.hurtT > 0.3 ? 1 : 0, hurt: p.hurtT, moveSpeed: p.moveSpeed });
-      if (p.dashCd > 0) {
-        ctx.strokeStyle = 'rgba(17,17,17,0.35)';
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 18, -Math.PI / 2, -Math.PI / 2 + (1 - p.dashCd / 0.58) * Math.PI * 2); ctx.stroke();
+      if (this.ridingBike) {
+        // Draw the mounted Kawasaki Ninja with rider
+        this.drawBike(ctx, this.ridingBike);
+
+        // Speedometer & eject hint HUD above player
+        const b = this.ridingBike;
+        ctx.save();
+        const tagY = b.y - 28;
+        const spdKmh = Math.round(Math.abs(b.speed) * 0.45);
+        ctx.fillStyle = 'rgba(12, 14, 18, 0.88)';
+        ctx.fillRect(b.x - 56, tagY - 9, 112, 17);
+        ctx.strokeStyle = Math.abs(b.speed) > 220 ? '#ff1420' : '#20d040';
+        ctx.lineWidth = 1.3;
+        ctx.strokeRect(b.x - 56, tagY - 9, 112, 17);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 8.5px IBM Plex Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${spdKmh} KM/H • [SPASI] LEPAS`, b.x, tagY + 2.5);
+        ctx.restore();
+      } else {
+        this.drawHuman(p.x, p.y, p.angle, false, p.weapon, p.walkT, p.attackAnim, [1, 1.04, 0.95, 1.05, 1, 0.96, 1.06, 0.97, 1.02], 0, p.muzzle,
+          { kick: p.kickAnim, side: p.punchSide, fistDur: 0.13, recoil: p.recoil, swing: p.swing, flash: p.hurtT > 0.3 ? 1 : 0, hurt: p.hurtT, moveSpeed: p.moveSpeed });
+        if (p.dashCd > 0) {
+          ctx.strokeStyle = 'rgba(17,17,17,0.35)';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 18, -Math.PI / 2, -Math.PI / 2 + (1 - p.dashCd / 0.58) * Math.PI * 2); ctx.stroke();
+        }
       }
     }
     if (p.alive && this.hostage) {

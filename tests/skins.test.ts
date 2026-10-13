@@ -31,6 +31,7 @@ function createGameFixture() {
   Object.assign(game, {
     ctx, decalX: ctx, levelIndex: 0, time: 0,
     enemies: [], player: { x: 100, y: 100, angle: 0, weapon: 'pistol', r: 11 },
+    bikes: [], ridingBike: null,
     hostage: null, focus: 1, focusActive: false, noSlowMo: false,
     kills: 0, totalEnemies: 5, levelTime: 12, maxCombo: 3, score: 1000,
     state: 'play', stateT: 1,

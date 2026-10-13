@@ -10,6 +10,7 @@ const basicControls = [
 ];
 
 const tacticalControls = [
+  { label: 'Motor Ninja (Kawasaki)', detail: 'Naik [E/F], gas kencang [W], lepas [SPASI] untuk ghost-ride!', keys: ['E', 'W', 'SPASI'] },
   { label: 'Focus / slow motion', detail: 'Tahan tombol untuk memperlambat.', keys: ['C', 'RODA'] },
   { label: 'Sandera / sprint / finish', detail: 'Aksi berubah sesuai target terdekat.', keys: ['SPASI'] },
   { label: 'Mode SUPERHOT', detail: 'Waktu bergerak saat kamu bergerak.', keys: ['T'] },
