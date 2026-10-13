@@ -84,3 +84,31 @@ test('drawHuman executes without throwing across all skins for player and enemie
     }, `Downed enemy drawing works with skin: ${s}`);
   }
 });
+
+test('drawCharacterEyes correctly mounts EYES.png onto head with valid polygons', async () => {
+  const { drawCharacterEyes, TOP_EYE_POLY, BOT_EYE_POLY } = await import('../src/game/eyes');
+  const { EYES_PNG_DATA_URL } = await import('../src/game/eyes-data');
+
+  assert.ok(EYES_PNG_DATA_URL.startsWith('data:image/png;base64,'), 'EYES_PNG_DATA_URL is valid base64 PNG');
+  assert.ok(TOP_EYE_POLY.length >= 20, 'Top eye polygon has sufficient vertices');
+  assert.ok(BOT_EYE_POLY.length >= 20, 'Bottom eye polygon has sufficient vertices');
+
+  // Verify all coordinates normalized in [0, 1]
+  for (const [x, y] of [...TOP_EYE_POLY, ...BOT_EYE_POLY]) {
+    assert.ok(x >= 0 && x <= 1, `x coordinate ${x} is normalized [0, 1]`);
+    assert.ok(y >= 0 && y <= 1, `y coordinate ${y} is normalized [0, 1]`);
+  }
+
+  // Verify drawCharacterEyes renders cleanly without throwing on mock context
+  const mockCtx = new Proxy({}, {
+    get() { return () => {}; },
+    set() { return true; },
+  }) as CanvasRenderingContext2D;
+
+  assert.doesNotThrow(() => {
+    drawCharacterEyes(mockCtx, 4, 0, 7.0, { enemy: false, flash: false, skinId: 'stickman' });
+    drawCharacterEyes(mockCtx, 4, 0, 7.0, { enemy: true, flash: true, skinId: 'stickman' });
+    drawCharacterEyes(mockCtx, 1, 0, 5.8, { enemy: false, flash: false, skinId: 'classic' });
+  });
+});
+

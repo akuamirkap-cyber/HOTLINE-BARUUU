@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Game } from './game/engine';
+import { Game, getStoredRealisticGore, setStoredRealisticGore } from './game/engine';
 import type { GameSnapshot } from './game/engine';
 import { LEVELS } from './game/levels';
 import { initAudio } from './game/audio';
@@ -39,14 +39,16 @@ interface GameViewProps {
   mobileControls: boolean;
   touchDevice: boolean;
   currentSkin: SkinId;
+  realisticMode: boolean;
   onSelectSkin: (skin: SkinId) => void;
+  onToggleRealistic: () => void;
   onToggleControls: () => void;
   onLandscape: () => void;
   onExit: () => void;
   onDone: (level: number, score: number) => void;
 }
 
-function GameView({ level, mobileControls, touchDevice, currentSkin, onSelectSkin, onToggleControls, onLandscape, onExit, onDone }: GameViewProps) {
+function GameView({ level, mobileControls, touchDevice, currentSkin, realisticMode, onSelectSkin, onToggleRealistic, onToggleControls, onLandscape, onExit, onDone }: GameViewProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const callbacks = useRef({ onExit, onDone });
   callbacks.current = { onExit, onDone };
@@ -62,6 +64,7 @@ function GameView({ level, mobileControls, touchDevice, currentSkin, onSelectSki
       onUIChange: setSnapshot,
     });
     if (currentSkin) instance.setSkin(currentSkin);
+    instance.setRealisticMode(realisticMode);
     setGame(instance);
     return () => instance.destroy();
   }, [level]);
@@ -69,6 +72,10 @@ function GameView({ level, mobileControls, touchDevice, currentSkin, onSelectSki
   useEffect(() => {
     if (game && currentSkin) game.setSkin(currentSkin);
   }, [game, currentSkin]);
+
+  useEffect(() => {
+    if (game) game.setRealisticMode(realisticMode);
+  }, [game, realisticMode]);
 
   useEffect(() => {
     const onResize = () => setPortrait(isPortrait());

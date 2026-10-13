@@ -29,7 +29,7 @@ function fixture() {
   Object.assign(game, {
     ctx, decalX: ctx, levelIndex: 0, nextId: 1, w: width, h: height,
     tiles: Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => x === 0 || y === 0 || x === width - 1 || y === height - 1 ? '#' : '.')),
-    enemies: [], pickups: [], particles: [], shards: [], texts: [], bullets: [], trails: [], ghosts: [], halves: [], casings: [], doors: [], lights: [],
+    enemies: [], pickups: [], particles: [], shards: [], corpses: [], realisticMode: true, texts: [], bullets: [], trails: [], ghosts: [], halves: [], casings: [], doors: [], lights: [],
     bikes: [], ridingBike: null,
     keys: new Set(), mouse: { x: 620, y: 300, down: false, pressed: false, right: false },
     touch: { enabled: false, moveX: 0, moveY: 0, aimX: 0, aimY: 0, aiming: false, angle: 0, focus: false },

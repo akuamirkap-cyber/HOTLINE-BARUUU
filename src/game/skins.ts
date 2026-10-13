@@ -1,4 +1,5 @@
 import type { WType, Swing } from './engine';
+import { drawCharacterEyes } from './eyes';
 
 export type SkinId = 'superhot' | 'stickman' | 'neon_shapes' | 'classic' | 'cyber_bot';
 
@@ -19,11 +20,11 @@ export const SKINS: Record<SkinId, SkinDef> = {
     id: 'superhot',
     name: 'SUPERHOT // GLASS',
     category: 'CRYSTALLINE',
-    tagline: 'Faceted Red & White Glass Shards',
+    tagline: 'Faceted Black Obsidian & Ruby Shards',
     badge: 'POLYGON',
-    accent: '#e51d2e',
-    description: 'Bentuk kristal poligon kaca ikonik. Musuh terbuat dari kaca merah delima berkilau, sementara kamu adalah prisma kristal putih murni.',
-    playerTag: 'White Crystal Prism',
+    accent: '#181a20',
+    description: 'Bentuk kristal poligon kaca obsidian hitam pekat. Musuh terbuat dari kaca merah delima berkilau, sementara kamu adalah prisma kristal kaca hitam obsidian.',
+    playerTag: 'Obsidian Black Prism',
     enemyTag: 'Ruby Glass Hostiles',
   },
   stickman: {
@@ -468,11 +469,8 @@ export function renderCharacterSkin(
     ctx.fill();
     ctx.stroke();
 
-    // Directional aim visor/slit on head
-    ctx.fillStyle = flash ? '#ffffff' : enemy ? '#ffe6e8' : '#00d2ff';
-    ctx.beginPath();
-    ctx.arc(8, 0, 1.8, 0, Math.PI * 2);
-    ctx.fill();
+    // Eyes mounted from EYES.png onto head
+    drawCharacterEyes(ctx, 4, 0, 6.8, { enemy, flash, skinId: 'stickman' });
 
     ctx.restore();
     return;
@@ -646,8 +644,8 @@ export function renderCharacterSkin(
   // SKIN 4 & 5: SUPERHOT (GLASS) & CLASSIC (OPERATOR)
   // =========================================================================
   const isSuper = isSuperhot || (!isClassic && !isStick && !isNeon && !isCyber);
-  const footC = enemy ? (isSuper ? '#bd2630' : '#851a24') : (isSuper ? '#8a94a6' : '#24252a');
-  const legShine = enemy ? (isSuper ? '#ff8c80' : '#cc4e58') : (isSuper ? '#eef2f7' : '#777980');
+  const footC = enemy ? (isSuper ? '#bd2630' : '#851a24') : (isSuper ? '#14161a' : '#24252a');
+  const legShine = enemy ? (isSuper ? '#ff8c80' : '#cc4e58') : (isSuper ? '#3a3f4a' : '#777980');
 
   const shoe = (sx: number, sy: number) => {
     const sg = ctx.createLinearGradient(sx - 3, sy - 2, sx + 3, sy + 2);
@@ -680,8 +678,8 @@ export function renderCharacterSkin(
     shoe(-6 + st2, 3);
   }
 
-  const armC = enemy ? (isSuper ? '#e3261d' : '#a31f24') : (isSuper ? '#ced5e0' : '#1c1c1c');
-  const armHi = enemy ? (isSuper ? '#ff7165' : '#e0535b') : (isSuper ? '#ffffff' : '#64666c');
+  const armC = enemy ? (isSuper ? '#e3261d' : '#a31f24') : (isSuper ? '#181a20' : '#1c1c1c');
+  const armHi = enemy ? (isSuper ? '#ff7165' : '#e0535b') : (isSuper ? '#3e4452' : '#64666c');
 
   if (o.held) {
     drawLimbDefault(ctx, 1, -7.6, 2, -12, 6.4, armC, armHi);
@@ -751,8 +749,8 @@ export function renderCharacterSkin(
   } else if (enemy) {
     g.addColorStop(0, '#ff998d'); g.addColorStop(0.32, '#f45c5b'); g.addColorStop(0.72, '#dd3945'); g.addColorStop(1, '#ac2939');
   } else if (isSuper) {
-    // Superhot Player is crystalline white / ice prism!
-    g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, '#eef2f7'); g.addColorStop(0.75, '#cbd5e1'); g.addColorStop(1, '#94a3b8');
+    // Superhot Player is crystalline obsidian black glass!
+    g.addColorStop(0, '#32363f'); g.addColorStop(0.38, '#1e2026'); g.addColorStop(0.74, '#121418'); g.addColorStop(1, '#090a0d');
   } else {
     // Classic Agent
     g.addColorStop(0, '#4a4a4a'); g.addColorStop(0.5, '#1d1d1d'); g.addColorStop(1, '#050505');
@@ -770,7 +768,7 @@ export function renderCharacterSkin(
     ctx.fillStyle = enemy
       ? 'rgba(126,18,37,0.12)'
       : isSuper
-      ? 'rgba(0,180,255,0.07)'
+      ? 'rgba(255,255,255,0.08)'
       : 'rgba(255,255,255,0.055)';
     ctx.beginPath(); ctx.moveTo(1, 0); ctx.lineTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.closePath(); ctx.fill();
   }
@@ -795,7 +793,7 @@ export function renderCharacterSkin(
     : enemy
     ? '#ff7b71'
     : isSuper
-    ? '#f8fafc'
+    ? '#181a20'
     : '#222327';
   ctx.beginPath();
   for (let i = 0; i < 6; i++) {
@@ -810,9 +808,12 @@ export function renderCharacterSkin(
   ctx.fillStyle = enemy
     ? 'rgba(255,238,230,0.62)'
     : isSuper
-    ? 'rgba(255,255,255,0.7)'
+    ? 'rgba(255,255,255,0.32)'
     : 'rgba(255,255,255,0.22)';
   ctx.beginPath(); ctx.moveTo(-1, -4); ctx.lineTo(3, -3); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+
+  // Eyes mounted from EYES.png onto head
+  drawCharacterEyes(ctx, 1, 0, 5.8, { enemy, flash, skinId: isSuper ? 'superhot' : 'classic' });
 
   ctx.restore();
 }

@@ -203,6 +203,17 @@ export const sfx = {
     for (let i = 0; i < 6; i++) tone(1800 + Math.random() * 3000, 0.15 + Math.random() * 0.2, 0.08, 'sine', undefined, Math.random() * 0.12);
     tone(70, 0.3, 0.7, 'sine', 30);
   },
+  fleshHit() {
+    // Hotline Miami meaty bullet impact / punch thump
+    tone(75, 0.2, 0.95, 'sine', 28);
+    noise(0.16, 1200, 1.8, 0.8, 'bandpass');
+    noise(0.06, 3600, 2.0, 0.5, 'bandpass', 0.02);
+  },
+  bloodSplat() {
+    // Visceral arterial blood spray splash
+    noise(0.22, 2200, 2.0, 0.65, 'bandpass');
+    tone(95, 0.15, 0.45, 'triangle', 35);
+  },
   glass() {
     noise(0.4, 6000, 0.5, 0.45, 'highpass');
     for (let i = 0; i < 8; i++) tone(2500 + Math.random() * 4000, 0.2, 0.06, 'sine', undefined, Math.random() * 0.2);

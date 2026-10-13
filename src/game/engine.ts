@@ -1,6 +1,7 @@
 import { LEVELS } from './levels';
 import { sfx, setMusicDuck, initAudio, startMusic, toggleMusic } from './audio';
 import { type SkinId, getStoredSkin, setStoredSkin } from './skins';
+import { drawCharacterEyes } from './eyes';
 
 export const T = 32;
 const S = 2; // prerender scale
@@ -62,6 +63,7 @@ interface Enemy {
   boss: boolean; homeX: number; homeY: number; burstShots: number;
   moveVx: number; moveVy: number; moveSpeed: number; strafeDir: number; strafeT: number; dodgeCd: number; dodgeT: number;
   doorPause?: number; doorBreached?: boolean;
+  suitColor?: string; shirtColor?: string; skinTone?: string; hairColor?: string;
 }
 interface Trail { x1: number; y1: number; x2: number; y2: number; life: number; max: number; enemy: boolean; w: number; }
 interface Ghost { x: number; y: number; angle: number; life: number; }
@@ -88,8 +90,44 @@ export interface Bike {
 }
 interface Door { hx: number; hy: number; closed: number; angle: number; av: number; pushT: number; pusher: 'player' | 'enemy'; bikeHitT?: number; }
 interface Shard { x: number; y: number; z: number; vz: number; vx: number; vy: number; rot: number; vr: number; size: number; color: string; pts: number[]; glint: boolean; }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: 'spark' | 'flash' | 'ring' | 'star' | 'smoke' | 'cone' | 'slash'; angle?: number; }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: 'spark' | 'flash' | 'ring' | 'star' | 'smoke' | 'cone' | 'slash' | 'blood'; angle?: number; }
 interface FText { x: number; y: number; text: string; life: number; color: string; size: number; }
+
+export interface Corpse {
+  x: number;
+  y: number;
+  angle: number;
+  headAngle: number;
+  pose: number;
+  boss: boolean;
+  suitColor: string;
+  shirtColor: string;
+  skinTone: string;
+  hairColor: string;
+  bloodR: number;
+  maxBloodR: number;
+  facets: number[];
+}
+
+const GORE_MODE_STORAGE_KEY = 'hotline-realistic-mode';
+
+export function getStoredRealisticGore(): boolean {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(GORE_MODE_STORAGE_KEY);
+      if (saved !== null) return saved === 'true';
+    }
+  } catch { /* storage fallback */ }
+  return true;
+}
+
+export function setStoredRealisticGore(val: boolean): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(GORE_MODE_STORAGE_KEY, val ? 'true' : 'false');
+    }
+  } catch { /* storage fallback */ }
+}
 
 export type GState = 'intro' | 'play' | 'cleared' | 'complete' | 'dead' | 'paused';
 
@@ -110,6 +148,7 @@ export interface GameSnapshot {
   timeSeconds: number;
   maxCombo: number;
   skin: SkinId;
+  realisticGore: boolean;
 }
 
 function mulberry(seed: number) {
@@ -182,6 +221,7 @@ export class Game {
     comboStep: 0, comboWin: 0, punchSide: 1, hitCount: 0, hitCountT: 0,
     kickCd: 0, kickAnim: 0, lungeT: 0, lungeX: 0, lungeY: 0, recoil: 0,
     hp: 3, hpT: 0, hurtT: 0, swing: null as Swing | null, meleeStep: 0, meleeWin: 0,
+    bloodySteps: 0, lastFootprintX: 0, lastFootprintY: 0,
   };
   trails: Trail[] = [];
   ghosts: Ghost[] = [];
@@ -213,8 +253,10 @@ export class Game {
   bullets: Bullet[] = [];
   doors: Door[] = [];
   shards: Shard[] = [];
+  corpses: Corpse[] = [];
   particles: Particle[] = [];
   texts: FText[] = [];
+  realisticMode = getStoredRealisticGore();
   exitX = 0; exitY = 0;
   totalEnemies = 0;
   state: GState = 'intro';
@@ -483,7 +525,14 @@ export class Game {
       timeSeconds: Math.floor(this.levelTime),
       maxCombo: this.maxCombo,
       skin: this.skin || 'superhot',
+      realisticGore: this.realisticMode,
     };
+  }
+
+  setRealisticMode(enabled: boolean) {
+    this.realisticMode = enabled;
+    setStoredRealisticGore(enabled);
+    this.emitUI(true);
   }
 
   private emitUI(force = false) {
@@ -518,7 +567,7 @@ export class Game {
     this.w = width;
     this.tiles = def.map.map((r) => r.padEnd(width, '#').split(''));
     this.enemies = []; this.pickups = []; this.bullets = []; this.doors = [];
-    this.shards = []; this.particles = []; this.texts = [];
+    this.shards = []; this.particles = []; this.texts = []; this.corpses = [];
     this.score = 0; this.combo = 0; this.comboT = 0; this.kills = 0; this.maxCombo = 0;
     this.levelTime = 0; this.redFlash = 0; this.shake = 0; this.chantIdx = -1;
     const rng = mulberry(1337 + i * 77);
@@ -527,6 +576,7 @@ export class Game {
     p.weapon = null; p.ammo = 0; p.cd = 0; p.alive = true; p.exec = null; p.attackAnim = 0;
     p.dashT = 0; p.dashCd = 0; p.comboStep = 0; p.comboWin = 0; p.hitCount = 0; p.hitCountT = 0; p.kickCd = 0; p.kickAnim = 0; p.lungeT = 0; p.recoil = 0;
     p.hp = 3; p.hpT = 0; p.hurtT = 0; p.swing = null; p.meleeStep = 0; p.meleeWin = 0;
+    p.bloodySteps = 0; p.lastFootprintX = 0; p.lastFootprintY = 0;
     this.trails = []; this.ghosts = []; this.casings = []; this.lights = []; this.halves = [];
     this.bikes = []; this.ridingBike = null;
     this.focus = 1; this.focusActive = false; this.kickBuffer = 0;
@@ -552,7 +602,10 @@ export class Game {
           const base = rng() < 0.4 ? 'patrol' : 'idle';
           const ang = [0, Math.PI / 2, Math.PI, -Math.PI / 2][Math.floor(rng() * 4)];
           const enemy = this.makeEnemy(cx, cy, c === 'B' ? Math.PI / 2 : ang, c === 'B' ? 'rifle' : enemyMap[c], c === 'B' ? 'idle' : base);
-          if (c === 'B') { enemy.boss = true; enemy.r = 16; enemy.hp = 11; enemy.maxHp = 11; enemy.react = 0.65; }
+          if (c === 'B') {
+            enemy.boss = true; enemy.r = 16; enemy.hp = 11; enemy.maxHp = 11; enemy.react = 0.65;
+            enemy.suitColor = '#141720'; enemy.shirtColor = '#991b1b'; enemy.skinTone = '#d69677'; enemy.hairColor = '#1e1814';
+          }
           this.enemies.push(enemy);
         } else if (c in pickMap) {
           this.tiles[y][x] = '.';
@@ -619,8 +672,9 @@ export class Game {
   }
 
   makeEnemy(x: number, y: number, angle: number, weapon: WType | null, base: 'idle' | 'patrol'): Enemy {
+    const id = this.nextId++;
     return {
-      id: this.nextId++, x, y, angle, r: 11, weapon, state: base, base,
+      id, x, y, angle, r: 11, weapon, state: base, base,
       downT: 0, vx: 0, vy: 0, downAngle: 0, react: 0, cd: 0, windup: 0,
       lastX: x, lastY: y, lostT: 0, path: [], pathT: 0, lookT: 0, turnT: rand(2, 5),
       walkT: Math.random() * 10, alertFlash: 0, executing: false,
@@ -628,6 +682,10 @@ export class Game {
       stagger: 0, hitFlash: 0, launched: false, hits: 0, spin: 0, hp: 3, maxHp: 3, doomed: false,
       batHits: 0, launchDistance: 0, launchHits: new Set(), boss: false, homeX: x, homeY: y, burstShots: 0,
       moveVx: 0, moveVy: 0, moveSpeed: 0, strafeDir: Math.random() < 0.5 ? -1 : 1, strafeT: rand(1.5, 3), dodgeCd: 0, dodgeT: 0,
+      suitColor: ['#f4f5f7', '#1a202c', '#2c313d', '#e2e8f0', '#334155'][id % 5],
+      shirtColor: ['#06b6d4', '#dc2626', '#2563eb', '#10b981', '#f59e0b'][id % 5],
+      skinTone: ['#e4a887', '#d69677', '#c58567', '#ebba9d'][id % 4],
+      hairColor: ['#1e1814', '#2b1e17', '#11100e', '#3e291f'][id % 4],
     };
   }
 
@@ -931,6 +989,246 @@ export class Game {
     this.texts.push({ x, y: y - 10, text: `${total}PTS${label ? ' ' + label : ''}`, life: 1.3, color: '#e0141e', size: 12 });
   }
 
+  splatBlood(x: number, y: number, dx: number, dy: number, intensity = 1.0) {
+    const base = Math.atan2(dy, dx);
+    const count = Math.round(22 * intensity);
+
+    // 1. Visceral blood pool puddle stamped on decalX
+    const poolR = rand(10, 16) * intensity;
+    const poolG = this.decalX.createRadialGradient(x, y, 2, x, y, poolR);
+    poolG.addColorStop(0, 'rgba(110, 6, 14, 0.95)');
+    poolG.addColorStop(0.55, 'rgba(145, 12, 22, 0.88)');
+    poolG.addColorStop(0.85, 'rgba(175, 18, 30, 0.65)');
+    poolG.addColorStop(1, 'rgba(145, 12, 22, 0)');
+    this.decalX.fillStyle = poolG;
+    this.decalX.beginPath();
+    this.decalX.ellipse(x, y, poolR, poolR * 0.78, base + rand(-0.3, 0.3), 0, Math.PI * 2);
+    this.decalX.fill();
+
+    // 2. Organic splatter blobs and droplets around body on floor
+    for (let k = 0; k < 8; k++) {
+      const bx = x + Math.cos(base + rand(-0.9, 0.9)) * rand(4, poolR * 1.1);
+      const by = y + Math.sin(base + rand(-0.9, 0.9)) * rand(4, poolR * 1.1);
+      const br = rand(2.5, 7.0) * intensity;
+      this.decalX.fillStyle = k % 2 === 0 ? 'rgba(125, 8, 16, 0.92)' : 'rgba(160, 15, 26, 0.86)';
+      this.decalX.beginPath();
+      this.decalX.arc(bx, by, br, 0, Math.PI * 2);
+      this.decalX.fill();
+    }
+
+    // 3. Directional arterial blood spray streaks & droplets radiating in a cone
+    for (let i = 0; i < count; i++) {
+      const spread = rand(-0.7, 0.7);
+      const a = base + spread;
+      const dist = rand(18, 110) * intensity;
+      const sx = x + Math.cos(a) * dist;
+      const sy = y + Math.sin(a) * dist;
+      const r = rand(1.3, 4.2);
+
+      // Permanent splatter drop on floor
+      this.decalX.fillStyle = ['rgba(140, 10, 18, 0.92)', 'rgba(175, 15, 28, 0.88)', 'rgba(95, 5, 12, 0.96)', 'rgba(195, 22, 35, 0.82)'][i % 4];
+      this.decalX.beginPath();
+      this.decalX.ellipse(sx, sy, r * 1.7, r * 0.85, a, 0, Math.PI * 2);
+      this.decalX.fill();
+
+      // Blood trail streak from impact origin
+      if (i < 10) {
+        this.decalX.strokeStyle = 'rgba(150, 12, 22, 0.6)';
+        this.decalX.lineWidth = rand(1.0, 2.5);
+        this.decalX.beginPath();
+        this.decalX.moveTo(x + Math.cos(a) * 4, y + Math.sin(a) * 4);
+        this.decalX.lineTo(sx, sy);
+        this.decalX.stroke();
+      }
+
+      // Check wall splatters: if ray hits wall tile, paint a thick wall blood smear!
+      const wx = Math.floor(sx / T), wy = Math.floor(sy / T);
+      if (this.tile(wx, wy) === '#') {
+        this.decalX.fillStyle = 'rgba(120, 8, 16, 0.95)';
+        this.decalX.beginPath();
+        this.decalX.ellipse(sx, sy, r * 2.2, r * 1.4, a + 1.57, 0, Math.PI * 2);
+        this.decalX.fill();
+      }
+
+      // 4. In-flight dynamic arterial blood droplet particles
+      const pSpeed = rand(180, 520);
+      this.particles.push({
+        x: x + rand(-4, 4),
+        y: y + rand(-4, 4),
+        vx: Math.cos(a) * pSpeed,
+        vy: Math.sin(a) * pSpeed,
+        life: rand(0.24, 0.44),
+        max: 0.44,
+        color: ['#8c0a14', '#b80f1e', '#e01424', '#ff2b3d'][i % 4],
+        size: rand(2.2, 5.0),
+        kind: 'blood',
+      });
+    }
+
+    // Blood mist vapor
+    for (let m = 0; m < 5; m++) {
+      const ma = base + rand(-0.6, 0.6);
+      this.particles.push({
+        x, y,
+        vx: Math.cos(ma) * rand(30, 90),
+        vy: Math.sin(ma) * rand(30, 90),
+        life: 0.6,
+        max: 0.6,
+        color: '135,12,22',
+        size: rand(8, 16) * intensity,
+        kind: 'smoke',
+      });
+    }
+  }
+
+  stampFootprint(x: number, y: number, angle: number, alpha: number, phase: number) {
+    const side = Math.sin(phase * 0.06) > 0 ? 1 : -1;
+    const perp = angle + Math.PI / 2;
+    const offX = Math.cos(perp) * (side * 3.2);
+    const offY = Math.sin(perp) * (side * 3.2);
+    const g = this.decalX;
+    g.save();
+    g.translate(x + offX, y + offY);
+    g.rotate(angle);
+    g.fillStyle = `rgba(130, 8, 16, ${Math.max(0.08, alpha * 0.45)})`;
+    g.beginPath();
+    g.ellipse(1.2, 0, 3.2, 1.4, 0, 0, Math.PI * 2);
+    g.fill();
+    g.beginPath();
+    g.ellipse(-2.6, 0, 1.8, 1.2, 0, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+  }
+
+  drawCorpse(ctx: CanvasRenderingContext2D, c: Corpse) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.angle);
+
+    // 1. Visceral Hotline Miami expanding blood pool under corpse
+    const poolR = Math.max(12, c.bloodR);
+    const poolG = ctx.createRadialGradient(2, 2, 2, 2, 2, poolR);
+    poolG.addColorStop(0, 'rgba(75, 4, 11, 0.98)');
+    poolG.addColorStop(0.55, 'rgba(125, 8, 18, 0.92)');
+    poolG.addColorStop(0.85, 'rgba(165, 14, 26, 0.75)');
+    poolG.addColorStop(1, 'rgba(145, 12, 22, 0)');
+    ctx.fillStyle = poolG;
+    ctx.beginPath();
+    ctx.ellipse(2, 2, poolR, poolR * 0.76, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Satellite blood puddles & droplets around body
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2 + 0.3;
+      const dist = poolR * (0.8 + ((k * 37) % 5) * 0.08);
+      ctx.fillStyle = k % 2 === 0 ? 'rgba(115, 6, 15, 0.92)' : 'rgba(155, 12, 24, 0.85)';
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * dist, Math.sin(a) * dist, 2.0 + (k % 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Floor contact shadow
+    ctx.fillStyle = 'rgba(20, 20, 25, 0.24)';
+    ctx.beginPath();
+    ctx.ellipse(2, 4, 18, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (c.boss) ctx.scale(1.35, 1.35);
+
+    // Limbs
+    const legC = '#1c2028';
+    const shoeC = '#0d0e12';
+    ctx.strokeStyle = legC;
+    ctx.lineWidth = 4.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (c.pose === 0) {
+      ctx.moveTo(-2, -3); ctx.lineTo(-11, -7); ctx.lineTo(-18, -6);
+      ctx.moveTo(-2, 3); ctx.lineTo(-10, 8); ctx.lineTo(-17, 10);
+    } else if (c.pose === 1) {
+      ctx.moveTo(-2, -2); ctx.lineTo(-9, -4); ctx.lineTo(-16, -1);
+      ctx.moveTo(-2, 3); ctx.lineTo(-11, 7); ctx.lineTo(-15, 12);
+    } else {
+      ctx.moveTo(-2, -3); ctx.lineTo(-12, -4); ctx.lineTo(-19, -8);
+      ctx.moveTo(-2, 2); ctx.lineTo(-12, 5); ctx.lineTo(-18, 4);
+    }
+    ctx.stroke();
+
+    // Shoes
+    ctx.fillStyle = shoeC;
+    ctx.beginPath();
+    ctx.arc(-18, -6, 2.6, 0, Math.PI * 2);
+    ctx.arc(-17, 10, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Arms
+    ctx.strokeStyle = c.suitColor;
+    ctx.lineWidth = 4.0;
+    ctx.beginPath();
+    if (c.pose === 0) {
+      ctx.moveTo(1, -7); ctx.lineTo(-4, -13); ctx.lineTo(-11, -14);
+      ctx.moveTo(1, 7); ctx.lineTo(-3, 14); ctx.lineTo(-9, 16);
+    } else {
+      ctx.moveTo(1, -7); ctx.lineTo(6, -12); ctx.lineTo(12, -14);
+      ctx.moveTo(1, 7); ctx.lineTo(-5, 12); ctx.lineTo(-12, 13);
+    }
+    ctx.stroke();
+
+    // Hands
+    ctx.fillStyle = c.skinTone;
+    ctx.beginPath();
+    ctx.arc(c.pose === 0 ? -11 : 12, -14, 2.5, 0, Math.PI * 2);
+    ctx.arc(c.pose === 0 ? -9 : -12, c.pose === 0 ? 16 : 13, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Suit Jacket Torso
+    ctx.fillStyle = c.suitColor;
+    ctx.strokeStyle = '#121418';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(-8, -8, 17, 16, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Dress Shirt Collar & Tie
+    ctx.fillStyle = c.shirtColor;
+    ctx.beginPath();
+    ctx.moveTo(3, -4); ctx.lineTo(7, 0); ctx.lineTo(3, 4); ctx.lineTo(0, 0); ctx.closePath();
+    ctx.fill();
+
+    // Bullet exit wounds / blood on suit
+    ctx.fillStyle = '#6d0812';
+    ctx.beginPath();
+    ctx.ellipse(1, 1, 4.2, 3.2, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head
+    ctx.save();
+    ctx.translate(6, 0);
+    ctx.rotate(c.headAngle - c.angle);
+
+    // Hair
+    ctx.fillStyle = c.hairColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, 5.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Face / skin
+    ctx.fillStyle = c.skinTone;
+    ctx.beginPath();
+    ctx.arc(1.5, 0, 4.6, -1.2, 1.2);
+    ctx.fill();
+
+    // Blood on head
+    ctx.fillStyle = '#8c0915';
+    ctx.beginPath();
+    ctx.arc(2, -1.5, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+    ctx.restore();
+  }
+
   killEnemy(e: Enemy, dx: number, dy: number, pts: number, label?: string) {
     const i = this.enemies.indexOf(e);
     if (i < 0) return;
@@ -940,40 +1238,95 @@ export class Game {
     }
     this.enemies.splice(i, 1);
     if (e.weapon) this.dropWeapon(e.x, e.y, e.weapon, dx * 80, dy * 80);
-    if (e.boss) {
-      // Extra dramatic boss explosion
-      this.spawnShards(e.x, e.y, dx, dy, true);
-      this.spawnShards(e.x, e.y, -dx, -dy, false);
-      for (let k = 0; k < 50; k++) {
-        const a = rand(0, Math.PI * 2);
+
+    if (this.realisticMode) {
+      // HOTLINE MIAMI REALISTIC GORE:
+      // Visceral arterial blood splatter + fallen enemy corpse + meaty flesh audio
+      sfx.fleshHit();
+      this.splatBlood(e.x, e.y, dx, dy, e.boss ? 3.0 : 1.4);
+
+      this.corpses.push({
+        x: e.x,
+        y: e.y,
+        angle: Math.atan2(dy, dx),
+        headAngle: Math.atan2(dy, dx) + rand(-0.4, 0.4),
+        pose: this.corpses.length % 3,
+        boss: !!e.boss,
+        suitColor: e.suitColor || (e.boss ? '#141720' : ['#f4f5f7', '#1a202c', '#2c313d', '#e2e8f0', '#334155'][e.id % 5]),
+        shirtColor: e.shirtColor || (e.boss ? '#991b1b' : ['#06b6d4', '#dc2626', '#2563eb', '#10b981', '#f59e0b'][e.id % 5]),
+        skinTone: e.skinTone || ['#e4a887', '#d69677', '#c58567', '#ebba9d'][e.id % 4],
+        hairColor: e.hairColor || ['#1e1814', '#2b1e17', '#11100e', '#3e291f'][e.id % 4],
+        bloodR: 9,
+        maxBloodR: e.boss ? rand(46, 68) : rand(28, 44),
+        facets: e.facets,
+      });
+
+      for (let k = 0; k < (e.boss ? 14 : 7); k++) {
+        const ga = Math.atan2(dy, dx) + rand(-1.1, 1.1);
+        const sp = rand(90, 280);
         this.particles.push({
-          x: e.x, y: e.y,
-          vx: Math.cos(a) * rand(120, 620), vy: Math.sin(a) * rand(120, 620),
-          life: 0.75, max: 0.75,
-          color: k % 3 === 0 ? '#ffd700' : k % 2 === 0 ? '#ff2233' : '#ffffff',
-          size: rand(4, 9), kind: 'spark'
+          x: e.x + rand(-4, 4), y: e.y + rand(-4, 4),
+          vx: Math.cos(ga) * sp, vy: Math.sin(ga) * sp,
+          life: rand(0.3, 0.55), max: 0.55,
+          color: k % 3 === 0 ? '#59040c' : k % 2 === 0 ? '#8a0815' : '#bd0f22',
+          size: rand(2.4, 5.2),
+          kind: 'blood',
         });
       }
-      for (let k = 0; k < 25; k++) {
-        this.makeShard(e.x, e.y, rand(0, Math.PI * 2), rand(180, 650), rand(2, 5), ['#ff2233', '#111', '#fff', '#ffd700'][k % 4], rand(90, 280));
+
+      if (e.boss) {
+        sfx.boom();
+        this.shake = Math.max(this.shake, 34);
+        this.hitstop = 0.25;
+        this.slowmo = 2.4;
+        this.whiteFlash = 1.0;
+        this.redFlash = 0.9;
+        this.lights.push({ x: e.x, y: e.y, r: 260, life: 0.9, max: 0.9, color: '255,40,20' });
+        this.texts.push({ x: e.x, y: e.y - 34, text: '★ BIG BOSS ELIMINATED ★', life: 2.4, color: '#e0141e', size: 16 });
+      } else {
+        this.shake = Math.max(this.shake, 8);
+        this.hitstop = 0.07;
+        this.slowmo = 0.32;
+        this.redFlash = Math.max(this.redFlash, 0.3);
+        this.lights.push({ x: e.x, y: e.y, r: 85, life: 0.22, max: 0.22, color: '220,30,20' });
       }
-      sfx.boom();
-      sfx.shatter();
-      this.shake = Math.max(this.shake, 34);
-      this.hitstop = 0.25;
-      this.slowmo = 2.4; // dramatic longer slow-mo for boss defeat
-      this.whiteFlash = 1.0;
-      this.redFlash = 0.8;
-      this.lights.push({ x: e.x, y: e.y, r: 260, life: 0.9, max: 0.9, color: '255,40,20' });
-      this.texts.push({ x: e.x, y: e.y - 34, text: '★ BIG BOSS DESTROYED ★', life: 2.4, color: '#e0141e', size: 16 });
     } else {
-      this.spawnShards(e.x, e.y, dx, dy, false);
-      sfx.shatter();
-      this.shake = Math.max(this.shake, 9);
-      this.hitstop = 0.07;
-      this.slowmo = 0.32;
-      this.whiteFlash = Math.max(this.whiteFlash, 0.5);
-      this.lights.push({ x: e.x, y: e.y, r: 90, life: 0.25, max: 0.25, color: '255,60,40' });
+      // SUPERHOT CRYSTALLINE MODE
+      if (e.boss) {
+        // Extra dramatic boss explosion
+        this.spawnShards(e.x, e.y, dx, dy, true);
+        this.spawnShards(e.x, e.y, -dx, -dy, false);
+        for (let k = 0; k < 50; k++) {
+          const a = rand(0, Math.PI * 2);
+          this.particles.push({
+            x: e.x, y: e.y,
+            vx: Math.cos(a) * rand(120, 620), vy: Math.sin(a) * rand(120, 620),
+            life: 0.75, max: 0.75,
+            color: k % 3 === 0 ? '#ffd700' : k % 2 === 0 ? '#ff2233' : '#ffffff',
+            size: rand(4, 9), kind: 'spark'
+          });
+        }
+        for (let k = 0; k < 25; k++) {
+          this.makeShard(e.x, e.y, rand(0, Math.PI * 2), rand(180, 650), rand(2, 5), ['#ff2233', '#111', '#fff', '#ffd700'][k % 4], rand(90, 280));
+        }
+        sfx.boom();
+        sfx.shatter();
+        this.shake = Math.max(this.shake, 34);
+        this.hitstop = 0.25;
+        this.slowmo = 2.4; // dramatic longer slow-mo for boss defeat
+        this.whiteFlash = 1.0;
+        this.redFlash = 0.8;
+        this.lights.push({ x: e.x, y: e.y, r: 260, life: 0.9, max: 0.9, color: '255,40,20' });
+        this.texts.push({ x: e.x, y: e.y - 34, text: '★ BIG BOSS DESTROYED ★', life: 2.4, color: '#e0141e', size: 16 });
+      } else {
+        this.spawnShards(e.x, e.y, dx, dy, false);
+        sfx.shatter();
+        this.shake = Math.max(this.shake, 9);
+        this.hitstop = 0.07;
+        this.slowmo = 0.32;
+        this.whiteFlash = Math.max(this.whiteFlash, 0.5);
+        this.lights.push({ x: e.x, y: e.y, r: 90, life: 0.25, max: 0.25, color: '255,60,40' });
+      }
     }
     this.addKill(pts, e.x, e.y, label);
     this.focus = Math.min(1, this.focus + 0.12);
@@ -1029,7 +1382,13 @@ export class Game {
       });
     }
 
-    for (let k = 0; k < 6; k++) this.makeShard(e.x, e.y, cut + (k % 2 ? 1.57 : -1.57) + rand(-0.5, 0.5), rand(60, 160), rand(1.2, 2.5), '#ff2a1f', rand(40, 100));
+    if (this.realisticMode) {
+      sfx.fleshHit();
+      sfx.bloodSplat();
+      this.splatBlood(e.x, e.y, dx, dy, 2.4);
+    } else {
+      for (let k = 0; k < 6; k++) this.makeShard(e.x, e.y, cut + (k % 2 ? 1.57 : -1.57) + rand(-0.5, 0.5), rand(60, 160), rand(1.2, 2.5), '#ff2a1f', rand(40, 100));
+    }
     sfx.slice();
     this.shake = Math.max(this.shake, 8);
     this.hitstop = 0.08;
@@ -1050,6 +1409,38 @@ export class Game {
     if (h.side < 0) ctx.rect(-40, -40, 80, 40); else ctx.rect(-40, 0, 80, 40);
     ctx.clip();
     ctx.rotate(h.body - h.cut);
+    if (this.realisticMode) {
+      // Realistic severed mobster half with visceral arterial cut edge
+      ctx.fillStyle = '#1c2028';
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.fill();
+
+      // Shirt collar inside
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath(); ctx.moveTo(1, -3); ctx.lineTo(6, 0); ctx.lineTo(1, 3); ctx.closePath(); ctx.fill();
+
+      // Head: face + hair
+      ctx.fillStyle = '#d69677';
+      ctx.beginPath(); ctx.arc(14, 0, 5.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1e1814';
+      ctx.beginPath(); ctx.arc(13, 0, 5.2, Math.PI * 0.4, Math.PI * 1.6); ctx.fill();
+
+      ctx.restore();
+
+      // Visceral raw bloody cut face
+      ctx.fillStyle = '#59040c';
+      ctx.fillRect(-13, -1.8, 26, 3.6);
+      ctx.fillStyle = '#8b0814';
+      ctx.fillRect(-11, -1.0, 22, 2.0);
+      // Severed bone / spine core
+      ctx.fillStyle = '#f5eedb';
+      ctx.beginPath(); ctx.arc(0, 0, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
+
     const pts = humanTorsoPoints(h.facets);
     const g = ctx.createLinearGradient(-8, -13, 8, 13);
     g.addColorStop(0, '#ff8a7e'); g.addColorStop(0.48, '#f0444c'); g.addColorStop(1, '#b92636');
@@ -1091,7 +1482,13 @@ export class Game {
     sfx.headshot();
     this.particles.push({ x: hx, y: hy, vx: 0, vy: 0, life: 0.25, max: 0.25, color: '#fff', size: 40, kind: 'star', angle: Math.atan2(dy, dx) });
     this.particles.push({ x: hx, y: hy, vx: 0, vy: 0, life: 0.5, max: 0.5, color: '#e0141e', size: 70, kind: 'ring' });
-    for (let k = 0; k < 14; k++) this.makeShard(hx, hy, Math.atan2(dy, dx) + rand(-0.5, 0.5), rand(250, 600), rand(1.5, 4), ['#ff2a1f', '#ff7a6b', '#fff'][k % 3], rand(120, 260));
+    if (this.realisticMode) {
+      sfx.fleshHit();
+      sfx.bloodSplat();
+      this.splatBlood(hx, hy, dx, dy, 2.5);
+    } else {
+      for (let k = 0; k < 14; k++) this.makeShard(hx, hy, Math.atan2(dy, dx) + rand(-0.5, 0.5), rand(250, 600), rand(1.5, 4), ['#ff2a1f', '#ff7a6b', '#fff'][k % 3], rand(120, 260));
+    }
     this.slowmo = Math.max(this.slowmo, 0.5);
     this.hitstop = 0.1;
     this.shake = Math.max(this.shake, 12);
@@ -1103,9 +1500,14 @@ export class Game {
     e.windup = 0;
     e.vx = dx * 140; e.vy = dy * 140;
     e.cd = Math.max(e.cd, 0.4);
-    sfx.hit();
+    if (this.realisticMode) {
+      sfx.fleshHit();
+      this.splatBlood(e.x, e.y, dx, dy, 0.5);
+    } else {
+      sfx.hit();
+      for (let k = 0; k < 4; k++) this.makeShard(e.x, e.y, Math.atan2(dy, dx) + rand(-0.6, 0.6), rand(105, 230), rand(1.3, 2.6), ['#e87175', '#f2958d', '#d95863'][k % 3], rand(48, 110));
+    }
     this.impact(e.x - dx * 6, e.y - dy * 6, Math.atan2(dy, dx), 0.6);
-    for (let k = 0; k < 4; k++) this.makeShard(e.x, e.y, Math.atan2(dy, dx) + rand(-0.6, 0.6), rand(105, 230), rand(1.3, 2.6), ['#e87175', '#f2958d', '#d95863'][k % 3], rand(48, 110));
     const pips = Math.max(0, Math.ceil(e.hp));
     this.texts.push({ x: e.x, y: e.y - 20, text: `HIT ${'■'.repeat(pips)}${'□'.repeat(Math.max(0, 3 - pips))}`, life: 0.7, color: '#e0141e', size: 10 });
     if (byPlayer) this.score += 50;
@@ -1550,6 +1952,20 @@ export class Game {
         if (p.moveSpeed > 8) {
           p.walkT += p.moveSpeed * dt;
           this.moveAmt = 1;
+          if (this.realisticMode) {
+            for (const c of this.corpses) {
+              if (Math.hypot(p.x - c.x, p.y - c.y) < c.bloodR + 4) {
+                p.bloodySteps = 12;
+                break;
+              }
+            }
+            if (p.bloodySteps > 0 && Math.hypot(p.x - p.lastFootprintX, p.y - p.lastFootprintY) > 16) {
+              p.lastFootprintX = p.x;
+              p.lastFootprintY = p.y;
+              p.bloodySteps--;
+              this.stampFootprint(p.x, p.y, Math.atan2(p.vy, p.vx) || p.angle, p.bloodySteps / 12, p.walkT);
+            }
+          }
         }
       }
       this.collide(p, p.r);
@@ -1786,7 +2202,20 @@ export class Game {
       const a = angle + rand(-0.9, 0.9);
       this.particles.push({ x, y, vx: Math.cos(a) * rand(120, 300), vy: Math.sin(a) * rand(120, 300), life: 0.18, max: 0.18, color: i % 2 ? '#e05b64' : '#fff2ee', size: 1.25, kind: 'spark' });
     }
-    for (let i = 0; i < 2 * power; i++) this.makeShard(x, y, angle + rand(-0.8, 0.8), rand(65, 170), rand(1.2, 2.8), ['#f07a79', '#db515d', '#ffb1a3'][i % 3], rand(50, 120));
+    if (this.realisticMode) {
+      for (let i = 0; i < 4 * power; i++) {
+        const a = angle + rand(-0.8, 0.8);
+        this.particles.push({
+          x, y,
+          vx: Math.cos(a) * rand(80, 240), vy: Math.sin(a) * rand(80, 240),
+          life: 0.22, max: 0.22,
+          color: ['#8c0a14', '#b80f1e', '#e01424'][i % 3],
+          size: rand(1.8, 3.2), kind: 'blood',
+        });
+      }
+    } else {
+      for (let i = 0; i < 2 * power; i++) this.makeShard(x, y, angle + rand(-0.8, 0.8), rand(65, 170), rand(1.2, 2.8), ['#f07a79', '#db515d', '#ffb1a3'][i % 3], rand(50, 120));
+    }
   }
 
   // pick the best target for melee magnetism
@@ -2899,6 +3328,11 @@ export class Game {
   }
 
   updateFx(dt: number, rdt: number) {
+    for (const c of this.corpses) {
+      if (c.bloodR < c.maxBloodR) {
+        c.bloodR = Math.min(c.maxBloodR, c.bloodR + dt * 16);
+      }
+    }
     for (let i = this.shards.length - 1; i >= 0; i--) {
       const s = this.shards[i];
       s.vz -= 900 * dt;
@@ -4606,7 +5040,7 @@ export class Game {
   }
 
   drawHuman(x: number, y: number, angle: number, enemy: boolean, weapon: WType | null, walkT: number, attackAnim: number, facets: number[], windup = 0, muzzle = 0,
-    o: { kick?: number; side?: number; flash?: number; fistDur?: number; stagger?: number; recoil?: number; swing?: Swing | null; moveSpeed?: number; hurt?: number; held?: boolean; boss?: boolean } = {}) {
+    o: { kick?: number; side?: number; flash?: number; fistDur?: number; stagger?: number; recoil?: number; swing?: Swing | null; moveSpeed?: number; hurt?: number; held?: boolean; boss?: boolean; suitColor?: string; shirtColor?: string; skinTone?: string; hairColor?: string; id?: number } = {}) {
     const ctx = this.ctx;
     ctx.save();
     const gait = Math.min(1, (o.moveSpeed || 0) / 170);
@@ -4637,12 +5071,15 @@ export class Game {
     // Compact trailing feet stay close to the body silhouette in the top-down view.
     const st = Math.sin(phase) * 1.8 * gait;
     const st2 = Math.sin(phase + Math.PI) * 1.8 * gait;
+    const mobsterSuit = o.suitColor || (o.boss ? '#141720' : ['#f4f5f7', '#1a202c', '#2c313d', '#e2e8f0', '#334155'][(o.id || 0) % 5]);
+    const mobsterSkin = o.skinTone || ['#e4a887', '#d69677', '#c58567', '#ebba9d'][(o.id || 0) % 4];
+
     const footC = enemy
-      ? isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#7a1c22' : '#bd2630'
-      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#2b303a' : isSuper ? '#8a94a6' : '#24252a';
+      ? this.realisticMode ? '#1c2028' : isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#7a1c22' : '#bd2630'
+      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#2b303a' : isSuper ? '#14161a' : '#24252a';
     const legShine = enemy
-      ? isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#c9343f' : '#ff8c80'
-      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#f59e0b' : isSuper ? '#eef2f7' : '#777980';
+      ? this.realisticMode ? '#2d3340' : isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#c9343f' : '#ff8c80'
+      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#f59e0b' : isSuper ? '#3a3f4a' : '#777980';
 
     const shoe = (sx: number, sy: number) => {
       if (isStick) {
@@ -4653,7 +5090,7 @@ export class Game {
       const sg = ctx.createLinearGradient(sx - 3, sy - 2, sx + 3, sy + 2);
       sg.addColorStop(0, legShine);
       sg.addColorStop(0.36, footC);
-      sg.addColorStop(1, enemy ? '#971c27' : '#111216');
+      sg.addColorStop(1, enemy ? (this.realisticMode ? '#0f1115' : '#971c27') : '#111216');
       ctx.fillStyle = sg;
       ctx.beginPath(); ctx.ellipse(sx, sy, 3.4, 2, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -4687,11 +5124,13 @@ export class Game {
     }
 
     const armC = enemy
-      ? isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#a82c35' : '#e3261d'
-      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#374151' : isSuper ? '#ced5e0' : '#1c1c1c';
+      ? this.realisticMode ? mobsterSuit : isStick ? '#e51d2e' : isNeon ? '#ff1e3c' : isCyber ? '#a82c35' : '#e3261d'
+      : isStick ? '#14171a' : isNeon ? '#00e5ff' : isCyber ? '#374151' : isSuper ? '#181a20' : '#1c1c1c';
     const armHi = enemy
-      ? isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#e54d58' : '#ff7165'
-      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#9ca3af' : isSuper ? '#ffffff' : '#64666c';
+      ? this.realisticMode ? 'rgba(255,255,255,0.22)' : isStick ? '#ff858e' : isNeon ? '#ff858e' : isCyber ? '#e54d58' : '#ff7165'
+      : isStick ? '#ffffff' : isNeon ? '#7df9ff' : isCyber ? '#9ca3af' : isSuper ? '#3e4452' : '#64666c';
+    const handC = enemy && this.realisticMode ? mobsterSkin : armC;
+    const handHi = enemy && this.realisticMode ? 'rgba(255,255,255,0.35)' : armHi;
     if (o.held) {
       // Captive raises both arms; the sharp shoulder silhouette reads clearly at game scale.
       this.drawLimb(ctx, 1, -7.6, 2, -12, 6.4, armC, armHi);
@@ -4866,11 +5305,8 @@ export class Game {
       ctx.fill();
       ctx.stroke();
 
-      // Forward-facing eye / visor indicator
-      ctx.fillStyle = flash ? '#ffffff' : enemy ? '#ffe6e8' : '#00d2ff';
-      ctx.beginPath();
-      ctx.arc(8, 0, 1.9, 0, Math.PI * 2);
-      ctx.fill();
+      // Eyes mounted from EYES.png onto head
+      drawCharacterEyes(ctx, 4, 0, 7.0, { enemy, flash, skinId: 'stickman' });
       ctx.restore();
       return;
     }
@@ -4925,6 +5361,88 @@ export class Game {
       return;
     }
 
+    if (enemy && this.realisticMode) {
+      const flash = (o.flash || 0) > 0;
+      const suitColor = flash ? '#ffffff' : (o.suitColor || (o.boss ? '#141720' : ['#f4f5f7', '#1a202c', '#2c313d', '#e2e8f0', '#334155'][(o.id || 0) % 5]));
+      const shirtColor = flash ? '#ffffff' : (o.shirtColor || (o.boss ? '#991b1b' : ['#06b6d4', '#dc2626', '#2563eb', '#10b981', '#f59e0b'][(o.id || 0) % 5]));
+      const skinTone = flash ? '#ffffff' : (o.skinTone || ['#e4a887', '#d69677', '#c58567', '#ebba9d'][(o.id || 0) % 4]);
+      const hairColor = flash ? '#ffffff' : (o.hairColor || ['#1e1814', '#2b1e17', '#11100e', '#3e291f'][(o.id || 0) % 4]);
+
+      // 1. Mobster Tailored Suit Jacket Torso
+      ctx.fillStyle = suitColor;
+      ctx.strokeStyle = flash ? '#ffffff' : '#111317';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(6.5, -5.2);
+      ctx.lineTo(3.8, -9.5);
+      ctx.lineTo(-2.5, -9.0);
+      ctx.lineTo(-7.0, -5.5);
+      ctx.lineTo(-7.8, 0);
+      ctx.lineTo(-7.0, 5.5);
+      ctx.lineTo(-2.5, 9.0);
+      ctx.lineTo(3.8, 9.5);
+      ctx.lineTo(6.5, 5.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Lapels
+      if (!flash) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        ctx.moveTo(6.5, -5.2); ctx.lineTo(1.5, -3.2); ctx.lineTo(-1, 0);
+        ctx.moveTo(6.5, 5.2); ctx.lineTo(1.5, 3.2); ctx.lineTo(-1, 0);
+        ctx.stroke();
+      }
+
+      // Dress Shirt V-neck
+      ctx.fillStyle = shirtColor;
+      ctx.beginPath();
+      ctx.moveTo(5.5, -3.5); ctx.lineTo(1.2, 0); ctx.lineTo(5.5, 3.5); ctx.closePath();
+      ctx.fill();
+
+      // Silk Tie
+      if (!flash) {
+        ctx.fillStyle = '#0d0e12';
+        ctx.beginPath();
+        ctx.moveTo(4.5, -1.2); ctx.lineTo(1.0, -1.0); ctx.lineTo(-1.8, 0); ctx.lineTo(1.0, 1.0); ctx.lineTo(4.5, 1.2); ctx.closePath();
+        ctx.fill();
+      }
+
+      // Bullet wounds / blood stains if staggered or damaged
+      if (!flash && ((o.stagger && o.stagger > 0) || (o.hurt && o.hurt > 0))) {
+        ctx.fillStyle = '#780612';
+        ctx.beginPath();
+        ctx.ellipse(-1.5, 2.2, 3.4, 2.4, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 2. Realistic Mobster Head
+      ctx.fillStyle = skinTone;
+      ctx.strokeStyle = flash ? '#ffffff' : '#221611';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(3.5, 0, 5.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Hair (mobster cut / slicked back)
+      if (!flash) {
+        ctx.fillStyle = hairColor;
+        ctx.beginPath();
+        ctx.arc(2.6, 0, 5.8, Math.PI * 0.42, Math.PI * 1.58);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Eyes mounted from EYES.png onto head
+      drawCharacterEyes(ctx, 3.5, 0, 5.8, { enemy, flash, skinId: 'classic' });
+
+      ctx.restore();
+      return;
+    }
+
     // crystalline body (Superhot & Classic)
     const pts = humanTorsoPoints(facets);
     const n = pts.length;
@@ -4935,8 +5453,8 @@ export class Game {
     } else if (enemy) {
       g.addColorStop(0, '#ff998d'); g.addColorStop(0.32, '#f45c5b'); g.addColorStop(0.72, '#dd3945'); g.addColorStop(1, '#ac2939');
     } else if (isSuper) {
-      // Superhot Player is crystalline white / ice prism!
-      g.addColorStop(0, '#ffffff'); g.addColorStop(0.38, '#f1f5f9'); g.addColorStop(0.74, '#cbd5e1'); g.addColorStop(1, '#94a3b8');
+      // Superhot Player is crystalline obsidian black glass!
+      g.addColorStop(0, '#32363f'); g.addColorStop(0.38, '#1e2026'); g.addColorStop(0.74, '#121418'); g.addColorStop(1, '#090a0d');
     } else {
       g.addColorStop(0, '#4a4a4a'); g.addColorStop(0.5, '#1d1d1d'); g.addColorStop(1, '#050505');
     }
@@ -4955,7 +5473,7 @@ export class Game {
       ctx.fillStyle = enemy
         ? 'rgba(126,18,37,0.12)'
         : isSuper
-        ? 'rgba(0,195,255,0.08)'
+        ? 'rgba(255,255,255,0.08)'
         : 'rgba(255,255,255,0.055)';
       ctx.beginPath(); ctx.moveTo(1, 0); ctx.lineTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.closePath(); ctx.fill();
     }
@@ -4986,7 +5504,7 @@ export class Game {
       : enemy
       ? '#ff7b71'
       : isSuper
-      ? '#f8fafc'
+      ? '#181a20'
       : '#222327';
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
@@ -4999,9 +5517,13 @@ export class Game {
     ctx.fillStyle = enemy
       ? 'rgba(255,238,230,0.62)'
       : isSuper
-      ? 'rgba(255,255,255,0.65)'
+      ? 'rgba(255,255,255,0.32)'
       : 'rgba(255,255,255,0.22)';
     ctx.beginPath(); ctx.moveTo(-1, -4); ctx.lineTo(3, -3); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+
+    // Eyes mounted from EYES.png onto head
+    drawCharacterEyes(ctx, 1, 0, 5.8, { enemy, flash, skinId: isSuper ? 'superhot' : 'classic' });
+
     ctx.restore();
   }
 
@@ -5039,6 +5561,84 @@ export class Game {
     this.drawLimb(ctx, 0 + wig * 0.4, 12, -6 + wig, 14, 5.2, mid, light);
     this.drawHand(ctx, -6 - wig, -14, 3.6, -2.6, mid, light, -1);
     this.drawHand(ctx, -6 + wig, 14, 3.6, 2.6, mid, light, 1);
+
+    if (this.realisticMode) {
+      const suitColor = e.suitColor || (e.boss ? '#141720' : ['#f4f5f7', '#1a202c', '#2c313d', '#e2e8f0', '#334155'][e.id % 5]);
+      const shirtColor = e.shirtColor || (e.boss ? '#991b1b' : ['#06b6d4', '#dc2626', '#2563eb', '#10b981', '#f59e0b'][e.id % 5]);
+      const skinTone = e.skinTone || ['#e4a887', '#d69677', '#c58567', '#ebba9d'][e.id % 4];
+      const hairColor = e.hairColor || ['#1e1814', '#2b1e17', '#11100e', '#3e291f'][e.id % 4];
+
+      // Small blood pool forming under downed enemy
+      ctx.fillStyle = 'rgba(125, 8, 18, 0.45)';
+      ctx.beginPath();
+      ctx.ellipse(3, 3, 16, 9, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Limbs: suit sleeves and trousers
+      this.drawLimb(ctx, -7, -4, -12 + wig * 0.35, -9, 5.2, '#1c2028', '#2d3340');
+      this.drawLimb(ctx, -12 + wig * 0.35, -9, -18 + wig, -13, 4.4, '#1c2028', '#2d3340');
+      this.drawLimb(ctx, -7, 4, -12 - wig * 0.3, 9, 5.2, '#1c2028', '#2d3340');
+      this.drawLimb(ctx, -12 - wig * 0.3, 9, -18 - wig, 14, 4.4, '#1c2028', '#2d3340');
+      this.drawLimb(ctx, 4, -5, 0 - wig * 0.4, -12, 4.8, suitColor, 'rgba(255,255,255,0.2)');
+      this.drawLimb(ctx, 0 - wig * 0.4, -12, -6 - wig, -14, 5.2, suitColor, 'rgba(255,255,255,0.2)');
+      this.drawLimb(ctx, 4, 5, 0 + wig * 0.4, 12, 4.8, suitColor, 'rgba(255,255,255,0.2)');
+      this.drawLimb(ctx, 0 + wig * 0.4, 12, -6 + wig, 14, 5.2, suitColor, 'rgba(255,255,255,0.2)');
+      this.drawHand(ctx, -6 - wig, -14, 3.6, -2.6, skinTone, 'rgba(255,255,255,0.3)', -1);
+      this.drawHand(ctx, -6 + wig, 14, 3.6, 2.6, skinTone, 'rgba(255,255,255,0.3)', 1);
+
+      // Mobster Suit Jacket Torso
+      ctx.fillStyle = suitColor;
+      ctx.strokeStyle = '#121418';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(-10, -7, 19, 15, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      // Shirt collar & tie
+      ctx.fillStyle = shirtColor;
+      ctx.beginPath();
+      ctx.moveTo(3, -4); ctx.lineTo(7, 0); ctx.lineTo(3, 4); ctx.lineTo(1, 0); ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#0a0a0d';
+      ctx.fillRect(4, -1, 3.5, 2);
+
+      // Wound / blood mark on torso
+      ctx.fillStyle = '#7a0a14';
+      ctx.beginPath();
+      ctx.ellipse(-2, 1, 3.5, 2.5, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Head: face + hair + knocked-out eyes
+      ctx.save();
+      ctx.translate(14, 0);
+      ctx.fillStyle = hairColor;
+      ctx.beginPath();
+      ctx.arc(0, 0, 5.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = skinTone;
+      ctx.beginPath();
+      ctx.arc(1.5, 0, 4.6, -1.2, 1.2);
+      ctx.fill();
+
+      // Knocked-out eye cross / closed eye
+      ctx.strokeStyle = '#1a1a1f';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(2, -2); ctx.lineTo(4, -2);
+      ctx.moveTo(2, 2); ctx.lineTo(4, 2);
+      ctx.stroke();
+
+      // Blood on face / forehead
+      ctx.fillStyle = '#8b0914';
+      ctx.beginPath();
+      ctx.arc(3, -1.5, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.restore();
+      return;
+    }
 
     if (isStick) {
       // Stickman downed torso & knocked-out circle head
@@ -5228,6 +5828,7 @@ export class Game {
       ctx.restore();
     }
 
+    for (const c of this.corpses) this.drawCorpse(ctx, c);
     for (const h of this.halves) this.drawHalf(ctx, h, true);
     for (const e of this.enemies) if (e.state === 'down') this.drawDowned(e);
     // sniper laser sight
@@ -5292,7 +5893,10 @@ export class Game {
 
     for (const e of this.enemies) {
       if (e.state === 'down' || e === this.hostage) continue;
-      this.drawHuman(e.x, e.y, e.angle, true, e.weapon, e.walkT, e.attackAnim, e.facets, e.windup, e.muzzle, { flash: e.hitFlash, stagger: e.stagger, moveSpeed: e.moveSpeed, boss: e.boss });
+      this.drawHuman(e.x, e.y, e.angle, true, e.weapon, e.walkT, e.attackAnim, e.facets, e.windup, e.muzzle, {
+        flash: e.hitFlash, stagger: e.stagger, moveSpeed: e.moveSpeed, boss: e.boss,
+        suitColor: e.suitColor, shirtColor: e.shirtColor, skinTone: e.skinTone, hairColor: e.hairColor, id: e.id,
+      });
       if (e.boss) {
         ctx.save();
         const tagY = e.y - 36;
@@ -5359,7 +5963,10 @@ export class Game {
     }
     if (p.alive && this.hostage) {
       const h = this.hostage;
-      this.drawHuman(h.x, h.y, h.angle, true, null, h.walkT, 0, h.facets, 0, 0, { held: true, moveSpeed: h.moveSpeed });
+      this.drawHuman(h.x, h.y, h.angle, true, null, h.walkT, 0, h.facets, 0, 0, {
+        held: true, moveSpeed: h.moveSpeed,
+        suitColor: h.suitColor, shirtColor: h.shirtColor, skinTone: h.skinTone, hairColor: h.hairColor, id: h.id,
+      });
       ctx.strokeStyle = `rgba(224,20,30,${0.55 + Math.sin(this.time * 8) * 0.18})`;
       ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.ellipse(h.x, h.y, 19, 22, 0, 0, Math.PI * 2); ctx.stroke();
